@@ -2,6 +2,13 @@
 
 An MCP server for Linear built in TypeScript. It exposes a structured tool surface for issues, projects, workflow metadata, attachments, portfolio entities, webhooks, and agent workflows.
 
+## Current status
+
+- Default runtime is **stdio**. Set `LINEAR_MCP_TRANSPORT=stream` to expose MCP streamable HTTP at `LINEAR_MCP_PATH` (default `/mcp`). The server does **not** expose `/sse`.
+- Auth supports both `LINEAR_API_KEY` and the tool-driven OAuth flow through `linear_auth` and `linear_auth_callback`. OAuth callback `state` values are single-use.
+- `linear_search_issues` is the query-backed issue search path. The built server advertises a required `query` string and keeps the free-text query separate from optional list-style filters.
+- Release validation is gated by `npm run verify:release`, which rebuilds the server, checks the built tool catalog, and smoke-tests a fresh packaged install.
+
 ## What it supports
 
 ### Core work management
@@ -181,6 +188,7 @@ Example project update:
 - `linear_search_issues` is the free-text search path and always requires `query`.
 - Optional `teamId`, `projectId`, `assigneeId`, `stateId`, `states`, `priority`, and `cycleId` filters are applied alongside the text query.
 - The search path sends `query` through Linear's search backend instead of encoding it as an issue filter field.
+- Current regression coverage covers both query-only and query-plus-filter search behavior.
 
 ## Marketplace and packaged installs
 
