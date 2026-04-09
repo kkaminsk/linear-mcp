@@ -65,6 +65,11 @@ describe('LinearAuth', () => {
       expect(url).toContain('https://linear.app/oauth/authorize');
       expect(url).toContain('client_id=test-client-id');
       expect(url).toContain('redirect_uri=http%3A%2F%2Flocalhost%3A3000%2Fcallback');
+      expect(url).toContain('scope=read%2Cwrite%2Cissues%3Acreate');
+      expect(url).toContain('actor=app');
+      expect(url).toContain('state=');
+      expect(url).not.toContain('offline_access');
+      expect(url).not.toContain('access_type=');
     });
 
     it('should throw error when called with API Key config', () => {
@@ -104,7 +109,10 @@ describe('LinearAuth', () => {
         { status: 200 }
       ));
 
-      await expect(auth.handleCallback('valid-code')).resolves.not.toThrow();
+      auth.getAuthorizationUrl();
+      const state = auth.getPendingOAuthState();
+
+      await expect(auth.handleCallback('valid-code', state!)).resolves.not.toThrow();
       expect(auth.isAuthenticated()).toBe(true);
     });
 
@@ -114,7 +122,7 @@ describe('LinearAuth', () => {
         apiKey: 'test-access-token'
       });
 
-      await expect(auth.handleCallback('valid-code')).rejects.toThrow();
+      await expect(auth.handleCallback('valid-code', 'state')).rejects.toThrow();
     });
 
     it('should throw error for invalid authorization code', async () => {
@@ -133,7 +141,52 @@ describe('LinearAuth', () => {
         { status: 400 }
       ));
 
-      await expect(auth.handleCallback('invalid-code')).rejects.toThrow();
+      auth.getAuthorizationUrl();
+      const state = auth.getPendingOAuthState();
+
+      await expect(auth.handleCallback('invalid-code', state!)).rejects.toThrow();
+    });
+
+    it('should reject callback state mismatches', async () => {
+      auth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+
+      auth.getAuthorizationUrl();
+
+      await expect(auth.handleCallback('valid-code', 'wrong-state')).rejects.toThrow(
+        'OAuth callback state did not match the issued authorization request'
+      );
+    });
+
+    it('should require a fresh state after a successful callback', async () => {
+      auth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+
+      mockFetch.mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          access_token: 'test-access-token',
+          refresh_token: 'test-refresh-token',
+          expires_in: 3600
+        }),
+        { status: 200 }
+      ));
+
+      auth.getAuthorizationUrl();
+      const state = auth.getPendingOAuthState();
+
+      await auth.handleCallback('valid-code', state!);
+
+      await expect(auth.handleCallback('valid-code', state!)).rejects.toThrow(
+        'No pending OAuth authorization request was found'
+      );
     });
   });
 

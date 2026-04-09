@@ -1,17 +1,24 @@
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 
-/**
- * Input types for issue operations
- */
-
 export interface CreateIssueInput {
-  title: string;
-  description: string;
+  title?: string;
+  description?: string;
   teamId: string;
   assigneeId?: string;
   priority?: number;
-  projectId?: string;
   estimate?: number;
+  projectId?: string;
+  projectMilestoneId?: string;
+  dueDate?: string;
+  cycleId?: string;
+  labelIds?: string[];
+  parentId?: string;
+  subscriberIds?: string[];
+  stateId?: string;
+  delegateId?: string;
+  templateId?: string;
+  createAsUser?: string;
+  displayIconUrl?: string;
 }
 
 export interface CreateIssuesInput {
@@ -23,8 +30,21 @@ export interface UpdateIssueInput {
   description?: string;
   assigneeId?: string;
   priority?: number;
-  projectId?: string;
+  estimate?: number;
+  projectId?: string | null;
+  projectMilestoneId?: string;
+  dueDate?: string;
+  cycleId?: string;
+  labelIds?: string[];
+  addedLabelIds?: string[];
+  removedLabelIds?: string[];
+  parentId?: string;
+  subscriberIds?: string[];
   stateId?: string;
+  delegateId?: string;
+  templateId?: string;
+  teamId?: string;
+  trashed?: boolean;
 }
 
 export interface BulkUpdateIssuesInput {
@@ -32,22 +52,36 @@ export interface BulkUpdateIssuesInput {
   update: UpdateIssueInput;
 }
 
-export interface SearchIssuesInput {
-  query?: string;
-  filter?: {
-    project?: {
-      id?: {
-        eq?: string;
-      };
-    };
-  };
-  teamIds?: string[];
-  assigneeIds?: string[];
+export interface GetIssueInput {
+  id: string;
+}
+
+export interface ListIssuesInput {
+  filter?: Record<string, unknown>;
+  teamId?: string;
+  projectId?: string;
+  assigneeId?: string;
+  stateId?: string;
   states?: string[];
   priority?: number;
+  cycleId?: string;
   first?: number;
   after?: string;
   orderBy?: string;
+}
+
+export interface SearchIssuesInput extends Omit<ListIssuesInput, 'orderBy'> {
+  query: string;
+}
+
+export interface CreateIssueRelationInput {
+  issueId: string;
+  relatedIssueId: string;
+  type: string;
+}
+
+export interface DeleteIssueRelationInput {
+  id: string;
 }
 
 export interface DeleteIssueInput {
@@ -58,18 +92,17 @@ export interface DeleteIssuesInput {
   ids: string[];
 }
 
-/**
- * Response types for issue operations
- */
-
 export interface Issue {
-  id: string;
-  identifier: string;
-  title: string;
-  url: string;
-  project?: {
-    name: string;
-  };
+  id?: string;
+  identifier?: string;
+  title?: string;
+  description?: string;
+  url?: string;
+  priority?: number;
+  estimate?: number;
+  dueDate?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CreateIssueResponse {
@@ -80,17 +113,17 @@ export interface CreateIssueResponse {
 }
 
 export interface CreateIssuesResponse {
-  issueCreate: {
-    success: boolean;
-    issues: Issue[];
-  };
-}
-
-export interface IssueBatchResponse {
   issueBatchCreate: {
     success: boolean;
     issues: Issue[];
-    lastSyncId: number;
+    lastSyncId?: number;
+  };
+}
+
+export interface UpdateIssueResponse {
+  issueUpdate: {
+    success: boolean;
+    issue?: Issue;
   };
 }
 
@@ -109,6 +142,7 @@ export interface SearchIssuesResponse {
     };
     nodes: Issue[];
   };
+  totalCount?: number;
 }
 
 export interface DeleteIssueResponse {
@@ -117,15 +151,23 @@ export interface DeleteIssueResponse {
   };
 }
 
-/**
- * Handler method types
- */
+export interface IssueBatchResponse {
+  issueBatchCreate: {
+    success: boolean;
+    issues: Issue[];
+    lastSyncId?: number;
+  };
+}
 
 export interface IssueHandlerMethods {
+  handleGetIssue(args: GetIssueInput): Promise<BaseToolResponse>;
   handleCreateIssue(args: CreateIssueInput): Promise<BaseToolResponse>;
   handleCreateIssues(args: CreateIssuesInput): Promise<BaseToolResponse>;
   handleBulkUpdateIssues(args: BulkUpdateIssuesInput): Promise<BaseToolResponse>;
+  handleListIssues(args: ListIssuesInput): Promise<BaseToolResponse>;
   handleSearchIssues(args: SearchIssuesInput): Promise<BaseToolResponse>;
   handleDeleteIssue(args: DeleteIssueInput): Promise<BaseToolResponse>;
   handleDeleteIssues(args: DeleteIssuesInput): Promise<BaseToolResponse>;
+  handleCreateIssueRelation(args: CreateIssueRelationInput): Promise<BaseToolResponse>;
+  handleDeleteIssueRelation(args: DeleteIssueRelationInput): Promise<BaseToolResponse>;
 }

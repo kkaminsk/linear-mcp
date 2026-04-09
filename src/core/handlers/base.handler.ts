@@ -1,6 +1,10 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { LinearAuth } from '../../auth.js';
-import { LinearGraphQLClient } from '../../graphql/client.js';
+import {
+  GraphQLResult,
+  LinearGraphQLClient,
+  LinearGraphQLRequestError,
+} from '../../graphql/client.js';
 import { BaseToolResponse } from '../interfaces/tool-handler.interface.js';
 
 /**
@@ -8,35 +12,32 @@ import { BaseToolResponse } from '../interfaces/tool-handler.interface.js';
  * All feature-specific handlers should extend this class.
  */
 export abstract class BaseHandler {
-  constructor(
-    protected readonly auth: LinearAuth,
-    protected readonly graphqlClient: LinearGraphQLClient | undefined
-  ) {}
+  constructor(protected readonly auth: LinearAuth) {}
 
   /**
    * Verifies authentication and returns the GraphQL client.
    * Should be called at the start of each handler method.
    */
-  protected verifyAuth(): LinearGraphQLClient {
-    if (!this.auth.isAuthenticated() || !this.graphqlClient) {
+  protected async verifyAuth(): Promise<LinearGraphQLClient> {
+    if (!this.auth.isAuthenticated()) {
       throw new McpError(
         ErrorCode.InvalidRequest,
         'Not authenticated. Call linear_auth first.'
       );
     }
 
-    if (this.auth.needsTokenRefresh()) {
-      this.auth.refreshAPIKey();
-    }
-
-    return this.graphqlClient;
+    await this.auth.ensureAuthenticatedClient();
+    return this.auth.getGraphQLClient();
   }
 
   /**
    * Creates a successful response with the given text content.
    */
-  protected createResponse(text: string): BaseToolResponse {
-    return {
+  protected createResponse(
+    text: string,
+    structuredContent?: Record<string, unknown>
+  ): BaseToolResponse {
+    const response: BaseToolResponse = {
       content: [
         {
           type: 'text',
@@ -44,23 +45,128 @@ export abstract class BaseHandler {
         },
       ],
     };
+
+    if (structuredContent) {
+      response.structuredContent = structuredContent;
+    }
+
+    return response;
   }
 
   /**
    * Creates a JSON response with the given data.
    */
-  protected createJsonResponse(data: unknown): BaseToolResponse {
-    return this.createResponse(JSON.stringify(data, null, 2));
+  protected createStructuredResponse(
+    summary: string,
+    data: Record<string, unknown>,
+    graphqlResult?: GraphQLResult<unknown>
+  ): BaseToolResponse {
+    return this.createResponse(summary, this.withGraphQLResult(data, graphqlResult));
+  }
+
+  /**
+   * Creates a structured JSON response with the given data.
+   */
+  protected createJsonResponse(
+    data: unknown,
+    summary: string = 'Returned structured data',
+    graphqlResult?: GraphQLResult<unknown>
+  ): BaseToolResponse {
+    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+      return this.createStructuredResponse(
+        summary,
+        data as Record<string, unknown>,
+        graphqlResult
+      );
+    }
+
+    return this.createStructuredResponse(summary, { value: data }, graphqlResult);
+  }
+
+  /**
+   * Creates a structured error response that MCP clients can inspect.
+   */
+  protected createErrorResponse(
+    message: string,
+    details?: Record<string, unknown>
+  ): BaseToolResponse {
+    return {
+      ...this.createResponse(message, details),
+      isError: true,
+    };
   }
 
   /**
    * Handles errors consistently across all handlers.
    */
-  protected handleError(error: unknown, operation: string): never {
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to ${operation}: ${error instanceof Error ? error.message : 'Unknown error'}`
+  protected handleError(error: unknown, operation: string): BaseToolResponse {
+    if (error instanceof LinearGraphQLRequestError) {
+      const errorType = this.getGraphQLErrorType(error);
+      return this.createErrorResponse(
+        `Failed to ${operation}: ${error.message}`,
+        {
+          operation,
+          error: {
+            type: errorType,
+            message: error.message,
+            retryable: error.result.meta.retryable,
+            graphql: this.serializeGraphQLResult(error.result),
+          },
+        }
+      );
+    }
+
+    if (error instanceof McpError) {
+      return this.createErrorResponse(
+        `Failed to ${operation}: ${error.message}`,
+        {
+          operation,
+          error: {
+            type: 'mcp',
+            code: error.code,
+            message: error.message,
+          },
+        }
+      );
+    }
+
+    return this.createErrorResponse(
+      `Failed to ${operation}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      {
+        operation,
+        error: {
+          type: 'internal',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        },
+      }
     );
+  }
+
+  private getGraphQLErrorType(error: LinearGraphQLRequestError): 'graphql' | 'auth' | 'permission' {
+    const graphQLErrorText = (error.result.errors ?? [])
+      .flatMap(detail => [
+        detail.message,
+        ...(detail.extensions ? Object.values(detail.extensions).map(value => String(value)) : []),
+      ])
+      .join(' ')
+      .toLowerCase();
+    const combined = `${error.message} ${graphQLErrorText}`.toLowerCase();
+
+    if (combined.includes('forbidden') || combined.includes('permission')) {
+      return 'permission';
+    }
+
+    if (
+      combined.includes('unauthorized')
+      || combined.includes('authentication')
+      || combined.includes('not authenticated')
+      || combined.includes('invalid api key')
+      || combined.includes('oauth')
+    ) {
+      return 'auth';
+    }
+
+    return 'graphql';
   }
 
   /**
@@ -73,12 +179,70 @@ export abstract class BaseHandler {
     params: T,
     required: Array<keyof T & string>
   ): void {
-    const missing = required.filter(param => !params[param]);
+    const missing = required.filter(param => {
+      const value = params[param];
+      return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+    });
+
     if (missing.length > 0) {
       throw new McpError(
         ErrorCode.InvalidParams,
         `Missing required parameters: ${missing.join(', ')}`
       );
     }
+  }
+
+  protected withGraphQLResult<T extends Record<string, unknown>>(
+    content: T,
+    graphqlResult?: GraphQLResult<unknown>
+  ): T & { graphql?: Record<string, unknown> } {
+    if (!graphqlResult) {
+      return content;
+    }
+
+    const serialized = this.serializeGraphQLResult(graphqlResult);
+    if (!serialized) {
+      return content;
+    }
+
+    return {
+      ...content,
+      graphql: serialized,
+    };
+  }
+
+  private serializeGraphQLResult(
+    result: GraphQLResult<unknown>
+  ): Record<string, unknown> | undefined {
+    const hasHeaders = Object.keys(result.meta.headers).length > 0;
+    const hasErrors = (result.errors?.length ?? 0) > 0;
+    const hasExtensions = result.extensions && Object.keys(result.extensions).length > 0;
+    const hasStatus = typeof result.meta.status === 'number';
+
+    if (!hasHeaders && !hasErrors && !hasExtensions && !hasStatus && !result.meta.retryable) {
+      return undefined;
+    }
+
+    const graphql: Record<string, unknown> = {
+      retryable: result.meta.retryable,
+    };
+
+    if (hasStatus) {
+      graphql.status = result.meta.status;
+    }
+
+    if (hasHeaders) {
+      graphql.headers = result.meta.headers;
+    }
+
+    if (hasErrors) {
+      graphql.errors = result.errors;
+    }
+
+    if (hasExtensions) {
+      graphql.extensions = result.extensions;
+    }
+
+    return graphql;
   }
 }

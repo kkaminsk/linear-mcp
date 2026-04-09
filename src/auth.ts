@@ -1,5 +1,6 @@
 import { LinearClient } from '@linear/sdk';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { LinearGraphQLClient } from './graphql/client.js';
 
 /**
  * Solution Attempts:
@@ -42,75 +43,66 @@ export interface TokenData {
 export class LinearAuth {
   private static readonly OAUTH_AUTH_URL = 'https://linear.app/oauth';
   private static readonly OAUTH_TOKEN_URL = 'https://api.linear.app';
+  private static readonly OAUTH_SCOPE = 'read,write,issues:create';
+  private static readonly OAUTH_ACTOR = 'app';
   private config?: AuthConfig;
   private tokenData?: TokenData;
   private linearClient?: LinearClient;
+  private pendingOAuthState?: string;
+  private refreshPromise?: Promise<void>;
 
   constructor() {}
 
   public getAuthorizationUrl(): string {
-    if (!this.config || this.config.type !== 'oauth') {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'OAuth config not initialized'
-      );
-    }
+    const config = this.getOAuthConfig();
+    const state = this.generateState();
+    this.pendingOAuthState = state;
 
     const params = new URLSearchParams({
-      client_id: this.config.clientId,
-      redirect_uri: this.config.redirectUri,
+      client_id: config.clientId,
+      redirect_uri: config.redirectUri,
       response_type: 'code',
-      scope: 'read,write,issues:create,offline_access',
-      actor: 'application', // Enable OAuth Actor Authorization
-      state: this.generateState(),
-      access_type: 'offline',
+      scope: LinearAuth.OAUTH_SCOPE,
+      actor: LinearAuth.OAUTH_ACTOR,
+      state,
     });
 
     return `${LinearAuth.OAUTH_AUTH_URL}/authorize?${params.toString()}`;
   }
 
-  public async handleCallback(code: string): Promise<void> {
-    if (!this.config || this.config.type !== 'oauth') {
+  public async handleCallback(code: string, state: string): Promise<void> {
+    const config = this.getOAuthConfig();
+
+    if (!this.pendingOAuthState) {
       throw new McpError(
         ErrorCode.InvalidRequest,
-        'OAuth config not initialized'
+        'No pending OAuth authorization request was found. Call linear_auth again to obtain a fresh authorization URL and state.'
+      );
+    }
+
+    if (state !== this.pendingOAuthState) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'OAuth callback state did not match the issued authorization request. Authorization URLs are single-use; call linear_auth again to obtain a fresh state.'
       );
     }
 
     try {
       const params = new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        redirect_uri: this.config.redirectUri,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: config.redirectUri,
         code,
-        access_type: 'offline'
       });
 
-      const response = await fetch(`${LinearAuth.OAUTH_TOKEN_URL}/oauth/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json'
-        },
-        body: params.toString()
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Token request failed: ${response.statusText}. Response: ${errorText}`);
-      }
-
-      const data = await response.json();
-      this.tokenData = {
+      const data = await this.exchangeToken(params, 'OAuth token exchange');
+      this.setActiveToken({
         apiKey: data.access_token,
-        refreshToken: data.refresh_token,
+        refreshToken: data.refresh_token ?? '',
         expiresAt: Date.now() + data.expires_in * 1000,
-      };
-
-      this.linearClient = new LinearClient({
-        apiKey: this.tokenData.apiKey,
       });
+      this.pendingOAuthState = undefined;
     } catch (error) {
       throw new McpError(
         ErrorCode.InternalError,
@@ -120,73 +112,54 @@ export class LinearAuth {
   }
 
   public async refreshAPIKey(): Promise<void> {
-    if (!this.config || this.config.type !== 'oauth' || !this.tokenData?.refreshToken) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        'OAuth not initialized or no refresh token available'
-      );
+    if (this.refreshPromise) {
+      await this.refreshPromise;
+      return;
     }
 
+    this.refreshPromise = this.performRefresh();
+
     try {
-      const params = new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: this.config.clientId,
-        client_secret: this.config.clientSecret,
-        refresh_token: this.tokenData.refreshToken
-      });
-
-      const response = await fetch(`${LinearAuth.OAUTH_TOKEN_URL}/oauth/token`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json'
-        },
-        body: params.toString()
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Token refresh failed: ${response.statusText}. Response: ${errorText}`);
-      }
-
-      const data = await response.json();
-      this.tokenData = {
-        apiKey: data.access_token,
-        refreshToken: data.refresh_token,
-        expiresAt: Date.now() + data.expires_in * 1000,
-      };
-
-      this.linearClient = new LinearClient({
-        apiKey: this.tokenData.apiKey,
-      });
-    } catch (error) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Token refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
+      await this.refreshPromise;
+    } finally {
+      this.refreshPromise = undefined;
     }
   }
 
+  public async ensureAuthenticatedClient(): Promise<LinearClient> {
+    if (!this.isAuthenticated()) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Not authenticated. Call linear_auth first.'
+      );
+    }
+
+    if (this.needsTokenRefresh()) {
+      await this.refreshAPIKey();
+    }
+
+    return this.getClient();
+  }
+
   public initialize(config: AuthConfig): void {
+    this.config = config;
+    this.pendingOAuthState = undefined;
+
     if (config.type === 'api') {
-      // Personal Access Token flow
-      this.tokenData = {
+      this.setActiveToken({
         apiKey: config.apiKey,
-        refreshToken: '', // Not needed for API Key
-        expiresAt: Number.MAX_SAFE_INTEGER, // API Keys don't expire
-      };
-      this.linearClient = new LinearClient({
-        apiKey: config.apiKey,
+        refreshToken: '',
+        expiresAt: Number.MAX_SAFE_INTEGER,
       });
     } else {
-      // OAuth flow
       if (!config.clientId || !config.clientSecret || !config.redirectUri) {
         throw new McpError(
           ErrorCode.InvalidParams,
           'Missing required OAuth parameters: clientId, clientSecret, redirectUri'
         );
       }
-      this.config = config;
+      this.tokenData = undefined;
+      this.linearClient = undefined;
     }
   }
 
@@ -200,6 +173,10 @@ export class LinearAuth {
     return this.linearClient;
   }
 
+  public getGraphQLClient(): LinearGraphQLClient {
+    return new LinearGraphQLClient(this.getClient());
+  }
+
   public isAuthenticated(): boolean {
     return !!this.linearClient && !!this.tokenData;
   }
@@ -211,13 +188,102 @@ export class LinearAuth {
 
   // For testing purposes
   public setTokenData(tokenData: TokenData): void {
+    this.setActiveToken(tokenData);
+  }
+
+  public getPendingOAuthState(): string | undefined {
+    return this.pendingOAuthState;
+  }
+
+  private generateState(): string {
+    return Math.random().toString(36).substring(2, 15);
+  }
+
+  private getOAuthConfig(): OAuthConfig {
+    if (!this.config || this.config.type !== 'oauth') {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'OAuth config not initialized'
+      );
+    }
+
+    return this.config;
+  }
+
+  private setActiveToken(tokenData: TokenData): void {
     this.tokenData = tokenData;
     this.linearClient = new LinearClient({
       apiKey: tokenData.apiKey,
     });
   }
 
-  private generateState(): string {
-    return Math.random().toString(36).substring(2, 15);
+  private async performRefresh(): Promise<void> {
+    const config = this.getOAuthConfig();
+    if (!this.tokenData?.refreshToken) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'OAuth not initialized or no refresh token available'
+      );
+    }
+
+    try {
+      const params = new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        refresh_token: this.tokenData.refreshToken
+      });
+
+      const data = await this.exchangeToken(params, 'OAuth token refresh');
+      this.setActiveToken({
+        apiKey: data.access_token,
+        refreshToken: data.refresh_token ?? this.tokenData.refreshToken,
+        expiresAt: Date.now() + data.expires_in * 1000,
+      });
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Token refresh failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
+  }
+
+  private async exchangeToken(
+    params: URLSearchParams,
+    context: string
+  ): Promise<{
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+  }> {
+    const response = await fetch(`${LinearAuth.OAUTH_TOKEN_URL}/oauth/token`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json'
+      },
+      body: params.toString()
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`${context} failed: ${response.statusText}. Response: ${errorText}`);
+    }
+
+    const data = await response.json() as Partial<{
+      access_token: string;
+      refresh_token: string;
+      expires_in: number;
+    }>;
+
+    if (!data.access_token || typeof data.expires_in !== 'number') {
+      throw new Error(`${context} returned an incomplete token response`);
+    }
+
+    return {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      expires_in: data.expires_in,
+    };
   }
 }

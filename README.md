@@ -1,210 +1,227 @@
 # Linear MCP Server
 
-An MCP server for interacting with Linear's API. This server provides a set of tools for managing Linear issues, projects, and teams through Cline.
+An MCP server for Linear built in TypeScript. It exposes a structured tool surface for issues, projects, workflow metadata, attachments, portfolio entities, webhooks, and agent workflows.
 
-## Setup Guide
+## What it supports
 
-### 1. Environment Setup
+### Core work management
+- Issues: get, create, batch create, bulk update, list, search, delete, hierarchy via `parentId`, and general issue relations
+- Projects: create, update, delete, get, list, search, create-with-issues, project updates, and initiative association via `initiativeId`
+- Comments: get a single comment, list comments globally or by issue, create threaded replies with `parentId`, update, delete, resolve, and unresolve threads
+- Project milestones: create, update, delete, get, search, list, bulk create
 
-1. Clone the repository
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
+### Workflow and discovery
+- Teams: get, list
+- Users: viewer, get, list, search
+- Workflow states: list
+- Labels: list, create, update, delete
+- Cycles: get, list, current cycle
 
-### 2. Authentication
+### Integrations and advanced surfaces
+- Attachments: get, list, create, update, delete
+- Webhooks: get, list, create, delete
+- Portfolio entities: initiatives and customers
+- Agents: agent sessions and agent activities
+- Capabilities: runtime capability discovery
 
-The server supports two authentication methods:
+### Runtime-aware behavior
+- Subscription tools are only advertised when the runtime reports streaming transport support.
+- If a subscription tool is invoked on stdio, the server returns a structured capability-limitation error instead of a generic failure.
+- The default runtime is stdio. Set `LINEAR_MCP_TRANSPORT=stream` to expose a remote MCP streamable HTTP endpoint instead.
+- Stream mode uses MCP streamable HTTP at `LINEAR_MCP_PATH` (default `/mcp`). The server does **not** expose a legacy `/sse` endpoint.
 
-#### API Key (Recommended)
+## Authentication
 
-1. Go to Linear Settings
-2. Navigate to the "Security & access" section
-3. Find the "Personal API keys" section
-4. Click "New API key"
-5. Give the key a descriptive label (e.g. "Cline MCP")
-6. Copy the generated token immediately
-7. Add the token to your `.env` file:
-   ```
-   LINEAR_API_KEY=your_api_key
-   ```
+### API key
 
-#### OAuth Flow (Alternative) ***NOT IMPLEMENTED***
+Set a personal API key in the environment:
 
-1. Create an OAuth application at https://linear.app/settings/api/applications
-2. Configure OAuth environment variables in `.env`:
-   ```
-   LINEAR_CLIENT_ID=your_oauth_client_id
-   LINEAR_CLIENT_SECRET=your_oauth_client_secret
-   LINEAR_REDIRECT_URI=http://localhost:3000/callback
-   ```
+```bash
+LINEAR_API_KEY=your_api_key
+```
 
-### 3. Running the Server
+This is the simplest way to run the server locally.
 
-1. Build the server:
-   ```bash
-   npm run build
-   ```
-2. Start the server:
-   ```bash
-   npm start
-   ```
+### OAuth
 
-### 4. Cline Integration
+The OAuth flow is available through MCP tools:
 
-1. Open your Cline MCP settings file:
-   - macOS: `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - Windows: `%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
-   - Linux: `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json`
+1. Call `linear_auth` with `clientId`, `clientSecret`, and `redirectUri`.
+2. Open the returned `authorizationUrl`.
+3. Call `linear_auth_callback` with both `code` and the exact returned `state`.
 
-2. Add the Linear MCP server configuration:
-   ```json
-   {
-     "mcpServers": {
-       "linear": {
-         "command": "node",
-         "args": ["/path/to/linear-mcp/build/index.js"],
-         "env": {
-           "LINEAR_API_KEY": "your_personal_access_token"
-         },
-         "disabled": false,
-         "autoApprove": []
-       }
-     }
-   }
-   ```
+Notes:
+- OAuth uses `actor=app`.
+- Callback state is single-use and validated against the issued authorization request. If a link goes stale, call `linear_auth` again to get a fresh URL and state.
+- The generated authorization URL uses only Linear-supported parameters. The server does not request offline-only OAuth parameters.
+- Token refresh is awaited before handlers resolve the active client.
 
-## Available Actions
+## Webhook security
 
-The server currently supports the following operations:
+Webhook management tools only register webhooks with Linear. They do **not** host a public receiver for you.
 
-### Issue Management
-- ✅ Create issues with full field support (title, description, team, project, etc.)
-- ✅ Update existing issues (priority, description, etc.)
-- ✅ Delete issues (single or bulk deletion)
-- ✅ Search issues with filtering
-- ✅ Associate issues with projects
-- ✅ Create parent/child issue relationships
-- ✅ Read and create comments and threaded comments
-
-### Project Management
-- ✅ Create projects with associated issues
-- ✅ Get project information **with rich text descriptions**
-- ✅ Search projects **with rich text descriptions**
-- ✅ Associate issues with projects
-- ✅ Proper description handling using Linear's `documentContent` field
-
-### Team Management
-- ✅ Get team information (with states and workflow details)
-- ✅ Access team states and labels
-
-### Authentication
-- ✅ API Key authentication
-- ✅ Secure token storage
-
-### Batch Operations
-- ✅ Bulk issue creation
-- ✅ Bulk issue deletion
-
-### Bulk Updates (In Testing)
-- 🚧 Bulk issue updates (parallel processing implemented, needs testing)
-
-## Rich Text Description Support
-
-The server now properly handles Linear's rich text descriptions for projects:
-
-- **Legacy Support**: Maintains compatibility with the old `description` field
-- **Rich Content**: Uses Linear's `documentContent` field for actual description content
-- **Automatic Fallback**: Falls back to legacy field if rich content is unavailable
-- **Type Safety**: Includes proper TypeScript types for both description formats
-
-### How It Works
-
-Linear uses a dual-field system for descriptions:
-1. `description` - Legacy field (often empty for backward compatibility)
-2. `documentContent.content` - Contains the actual rich text description content
-
-The MCP server automatically:
-- Queries both fields from Linear's API
-- Prioritizes `documentContent.content` over the legacy `description` field
-- Provides a utility function `getProjectDescription()` for consistent access
-- Returns an `actualDescription` field in responses for easy access
-
-## Features in Development
-
-The following features are currently being worked on:
-
-### Issue Management
-- 🚧 Complex search filters
-- 🚧 Pagination support for large result sets
-
-### Metadata Operations
-- 🚧 Label management (create/update/assign)
-- 🚧 Cycle/milestone management
-
-### Project Management
-- 🚧 Project template support
-- 🚧 Advanced project operations
-
-### Authentication
-- 🚧 OAuth flow with automatic token refresh
-
-### Performance & Security
-- 🚧 Rate limiting
-- 🚧 Detailed logging
-- 🚧 Load testing and optimization
+If you create a webhook:
+- store the webhook secret outside the repository,
+- verify the Linear signature on every delivered payload,
+- reject unsigned or invalid payloads before processing them.
 
 ## Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Run tests
-npm test
-
-# Run integration tests (requires LINEAR_API_KEY)
-npm run test:integration
-
-# Build the server
 npm run build
-
-# Start the server
+npm test
 npm start
 ```
 
-## Integration Testing
+Additional commands:
 
-Integration tests verify that authentication and API calls work correctly:
+```bash
+npm run dev
+npm run test:coverage
+npm run test:integration
+```
 
-1. Set up authentication (API Key recommended for testing)
-2. Run integration tests:
-   ```bash
-   npm run test:integration
-   ```
+## MCP setup
 
-For OAuth testing:
-1. Configure OAuth credentials in `.env`
-2. Remove `.skip` from OAuth tests in `src/__tests__/auth.integration.test.ts`
-3. Run integration tests
+Example MCP configuration:
 
-## Recent Improvements
+```json
+{
+  "mcpServers": {
+    "linear": {
+      "command": "node",
+      "args": ["C:\\path\\to\\linear-mcp\\build\\index.js"],
+      "env": {
+        "LINEAR_API_KEY": "your_personal_access_token"
+      }
+    }
+  }
+}
+```
 
-### Project Description Support (Latest)
-- ✅ Fixed empty project descriptions by implementing Linear's `documentContent` field support
-- ✅ Added proper TypeScript types for rich text content
-- ✅ Implemented automatic fallback from rich content to legacy description
-- ✅ Updated all project-related queries and handlers
-- ✅ Added comprehensive tests for new description handling
-- ✅ Maintained backward compatibility with existing API consumers
+## Runtime transports
 
-### Previous Improvements
-- ✅ Enhanced type safety across all operations
-- ✅ Implemented true batch operations for better performance
-- ✅ Improved error handling and validation
-- ✅ Added comprehensive test coverage
-- ✅ Refactored architecture for better maintainability
+### Stdio
+
+- Default mode for local clients such as Cline.
+- No remote HTTP endpoint is available in stdio mode.
+- Startup diagnostics will report whether `LINEAR_API_KEY` is configured or whether you still need to finish auth setup.
+
+### Streamable HTTP
+
+Set these environment variables before starting the server:
+
+```bash
+LINEAR_MCP_TRANSPORT=stream
+LINEAR_MCP_HOST=127.0.0.1
+LINEAR_MCP_PORT=3000
+LINEAR_MCP_PATH=/mcp
+```
+
+- Clients should connect to `http://127.0.0.1:3000/mcp` by default.
+- `/sse` is not a supported endpoint; use the configured streamable HTTP path instead.
+- If you need a public tunnel for a remote client, expose the configured port and forward the `/mcp` path. For example, `ngrok http 3000` should target the stream endpoint, not `/sse`.
+
+## Issue workflows
+
+### Hierarchy vs. relations
+
+- Use `parentId` on `linear_create_issue` and `linear_bulk_update_issues` for parent-child hierarchy.
+- Use `linear_create_issue_relation` and `linear_delete_issue_relation` for non-hierarchical relationships such as blocked-by or duplicate links.
+- `linear_get_issue` is the canonical hierarchy read and returns both `parent` and `children` references when they exist.
+
+Example hierarchy update:
+
+```json
+{
+  "issueIds": ["ENG-124"],
+  "update": {
+    "parentId": "ENG-100"
+  }
+}
+```
+
+### Existing issue project assignment
+
+Use `linear_bulk_update_issues` for the released existing-issue update path, even when updating a single issue:
+
+```json
+{
+  "issueIds": ["ENG-123"],
+  "update": {
+    "projectId": "project-abc"
+  }
+}
+```
+
+- Set or change a project assignment by sending a project ID.
+- Clear an existing project assignment explicitly with `"projectId": null`.
+- Omitting `projectId` leaves the current project unchanged.
+
+## Project and initiative workflows
+
+- Initiative lifecycle tools are available through `linear_get_initiative`, `linear_list_initiatives`, `linear_create_initiative`, and `linear_update_initiative`.
+- Project create and update workflows accept `initiativeId` so clients can attach a project to an initiative.
+- Clear an existing initiative association explicitly with `"initiativeId": null` on `linear_update_project`.
+- Project reads and mutation responses include linked initiative summary data when the association exists.
+
+Example project update:
+
+```json
+{
+  "id": "project-abc",
+  "initiativeId": "initiative-42"
+}
+```
+
+## Search semantics
+
+- `linear_list_issues` is the filter-and-pagination path.
+- `linear_search_issues` is the free-text search path and always requires `query`.
+- Optional `teamId`, `projectId`, `assigneeId`, `stateId`, `states`, `priority`, and `cycleId` filters are applied alongside the text query.
+- The search path sends `query` through Linear's search backend instead of encoding it as an issue filter field.
+
+## Marketplace and packaged installs
+
+- The published package exposes the `linear-mcp` executable from `build/index.js`.
+- Release verification uses:
+
+```bash
+npm run verify:tool-catalog
+npm run verify:package-install
+```
+
+### Troubleshooting
+
+- If startup logs say `Auth: no LINEAR_API_KEY detected`, the package installed correctly and you only need to finish auth setup.
+- If a remote client hangs on `/sse`, switch it to the configured streamable HTTP endpoint such as `/mcp`, or run the server in stdio mode for local clients.
+- Before publishing, run `npm run verify:release` to rebuild, validate the built tool catalog, and smoke-test a fresh package install.
+
+## Comment tools
+
+- `linear_get_comment` returns a direct comment payload with stable IDs, author metadata, issue context, parent linkage, and resolution state when present.
+- `linear_list_comments` and `linear_get_issue_comments` both accept Linear-style collection controls: `first`, `after`, `last`, `before`, `filter`, `includeArchived`, and `orderBy`.
+- `linear_create_comment` and `linear_update_comment` use markdown `body` as the primary content field. `bodyData` remains optional advanced structured content for clients that need it.
+
+## Released tool surface (Version 1.0.0)
+
+Version 1.0.0 ships the released issue-update and comment workflow surface:
+
+- `linear_bulk_update_issues`
+- `linear_get_comment`
+- `linear_list_comments`
+- `linear_get_issue_comments`
+- `linear_create_comment`
+- `linear_update_comment`
+- `linear_delete_comment`
+- `linear_resolve_comment`
+- `linear_unresolve_comment`
+
+## Implementation notes
+
+- Tool schemas in `src/core/types/tool.types.ts` use standard JSON Schema.
+- Tool responses return machine-readable `structuredContent`.
+- Comment tools use markdown-first `body` fields; `bodyData` is optional advanced structured content.
+- The server uses both raw GraphQL operations and the current `@linear/sdk` surface.
+- GraphQL errors preserve status, headers, extensions, retryability, and error details.

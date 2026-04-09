@@ -1,90 +1,97 @@
-/**
- * Project operation types
- * These types define the structure for project-related operations in Linear
- */
+import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 
-/**
- * Document content structure for rich text descriptions
- */
-export interface DocumentContent {
-  /** Markdown/plain text version of the content */
-  content?: string;
-  /** Document state information for rich text formatting */
-  contentState?: string;
-}
-
-/**
- * Project information with proper description handling
- */
-export interface Project {
-  id: string;
-  name: string;
-  /** Legacy description field (usually empty) */
-  description?: string;
-  /** Rich content description field (actual content) */
-  documentContent?: DocumentContent;
-  url: string;
-  teams?: {
-    nodes: Array<{
-      id: string;
-      name: string;
-    }>;
-  };
-}
-
-/**
- * Utility function to get the actual project description
- * Prioritizes documentContent.content over legacy description field
- */
-export function getProjectDescription(project: Project): string {
-  return project.documentContent?.content || project.description || '';
-}
-
-/**
- * Input for creating a new project
- * @example
- * ```typescript
- * const projectInput: ProjectInput = {
- *   name: "Q1 Planning",
- *   description: "Q1 2025 Planning Project",
- *   teamIds: ["team-id-1", "team-id-2"], // Required: Array of team IDs this project belongs to
- *   state: "started" // Optional: Project state
- * };
- * ```
- */
 export interface ProjectInput {
-  /** The name of the project */
   name: string;
-
-  /** Optional description of the project */
   description?: string;
-
-  /**
-   * Array of team IDs this project belongs to
-   * @required
-   * Note: Linear API requires teamIds (array) not teamId (single value)
-   */
+  content?: string;
   teamIds: string[];
+  initiativeId?: string;
+  leadId?: string;
+  memberIds?: string[];
+  startDate?: string;
+  targetDate?: string;
+  statusId?: string;
+  priority?: number;
+  icon?: string;
+  color?: string;
+  labelIds?: string[];
+  templateId?: string;
+  useDefaultTemplate?: boolean;
+}
 
-  /** Optional project state */
-  state?: string;
+export interface UpdateProjectInput {
+  name?: string;
+  description?: string;
+  content?: string;
+  teamIds?: string[];
+  initiativeId?: string | null;
+  leadId?: string;
+  memberIds?: string[];
+  startDate?: string;
+  targetDate?: string;
+  statusId?: string;
+  priority?: number;
+  icon?: string;
+  color?: string;
+  labelIds?: string[];
+  trashed?: boolean;
+}
+
+export interface ListProjectsInput {
+  filter?: Record<string, unknown>;
+  teamId?: string;
+  leadId?: string;
+  statusId?: string;
+  first?: number;
+  after?: string;
+  orderBy?: string;
+}
+
+export interface SearchProjectsInput extends Omit<ListProjectsInput, 'orderBy'> {
+  query: string;
+}
+
+export interface ProjectUpdateCreateInput {
+  projectId: string;
+  body?: string;
+  bodyData?: Record<string, unknown>;
+  health?: string;
+  isDiffHidden?: boolean;
+}
+
+export interface ProjectUpdateUpdateInput {
+  id: string;
+  body?: string;
+  bodyData?: Record<string, unknown>;
+  health?: string;
+  isDiffHidden?: boolean;
+}
+
+export interface Project {
+  id?: string;
+  name?: string;
+  description?: string;
+  content?: string;
+  url?: string;
+  startDate?: string;
+  targetDate?: string;
 }
 
 export interface ProjectResponse {
   projectCreate: {
     success: boolean;
-    project: Project;
-    lastSyncId: number;
+    project?: Project;
+    lastSyncId?: number;
   };
   issueBatchCreate?: {
     success: boolean;
     issues: Array<{
-      id: string;
-      identifier: string;
-      title: string;
-      url: string;
+      id?: string;
+      identifier?: string;
+      title?: string;
+      url?: string;
     }>;
-    lastSyncId: number;
+    lastSyncId?: number;
   };
 }
 
@@ -96,4 +103,19 @@ export interface SearchProjectsResponse {
 
 export interface GetProjectResponse {
   project: Project;
+}
+
+export interface ProjectHandlerMethods {
+  handleCreateProject(args: ProjectInput): Promise<BaseToolResponse>;
+  handleUpdateProject(args: UpdateProjectInput & { id: string }): Promise<BaseToolResponse>;
+  handleDeleteProject(args: { id: string }): Promise<BaseToolResponse>;
+  handleCreateProjectWithIssues(args: {
+    project: ProjectInput;
+    issues: Array<Record<string, unknown>>;
+  }): Promise<BaseToolResponse>;
+  handleGetProject(args: { id: string }): Promise<BaseToolResponse>;
+  handleListProjects(args: ListProjectsInput): Promise<BaseToolResponse>;
+  handleSearchProjects(args: SearchProjectsInput): Promise<BaseToolResponse>;
+  handleCreateProjectUpdate(args: ProjectUpdateCreateInput): Promise<BaseToolResponse>;
+  handleUpdateProjectUpdate(args: ProjectUpdateUpdateInput): Promise<BaseToolResponse>;
 }

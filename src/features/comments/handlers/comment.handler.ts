@@ -1,117 +1,212 @@
 import { BaseHandler } from '../../../core/handlers/base.handler.js';
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 import { LinearAuth } from '../../../auth.js';
-import { LinearGraphQLClient } from '../../../graphql/client.js';
+import {
+  getString,
+} from '../../../types/sdk.utils.js';
 import {
   CommentHandlerMethods,
   CreateCommentInput,
-  GetIssueCommentsInput,
   CreateCommentResponse,
-  GetIssueCommentsResponse
+  DeleteCommentInput,
+  DeleteCommentResponse,
+  GetCommentInput,
+  GetCommentResponse,
+  GetIssueCommentsInput,
+  GetIssueCommentsResponse,
+  ListCommentsInput,
+  ListCommentsResponse,
+  ResolveCommentResponse,
+  ResolveCommentInput,
+  UnresolveCommentInput,
+  UnresolveCommentResponse,
+  UpdateCommentInput,
+  UpdateCommentResponse,
 } from '../types/comment.types.js';
+import {
+  mapComment,
+  mapCommentConnection,
+  mapCommentIssueReference,
+} from '../comment.mapper.js';
 
-/**
- * Handler for comment-related operations.
- * Manages creating and retrieving comments on issues.
- */
 export class CommentHandler extends BaseHandler implements CommentHandlerMethods {
-  constructor(auth: LinearAuth, graphqlClient?: LinearGraphQLClient) {
-    super(auth, graphqlClient);
+  constructor(auth: LinearAuth) {
+    super(auth);
   }
 
-  /**
-   * Gets comments for a specific issue, including threaded replies.
-   */
+  async handleGetComment(args: GetCommentInput): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['id']);
+
+      const result = await client.getComment(args) as GetCommentResponse;
+      if (!result.comment) {
+        throw new Error(`Comment ${args.id} was not found`);
+      }
+
+      return this.createStructuredResponse(
+        `Fetched comment ${args.id}`,
+        {
+          comment: await mapComment(result.comment),
+        }
+      );
+    } catch (error) {
+      return this.handleError(error, 'get comment');
+    }
+  }
+
+  async handleListComments(args: ListCommentsInput = {}): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      const result = await client.listComments(args) as ListCommentsResponse;
+      const comments = await mapCommentConnection(result.comments);
+
+      return this.createStructuredResponse(
+        `Listed ${comments.nodes.length} comments`,
+        {
+          comments: comments.nodes,
+          pageInfo: comments.pageInfo,
+        }
+      );
+    } catch (error) {
+      return this.handleError(error, 'list comments');
+    }
+  }
+
   async handleGetIssueComments(args: GetIssueCommentsInput): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['issueId']);
 
-      const result = await client.getIssueComments(
-        args.issueId,
-        args.first || 50,
-        args.after,
-        args.includeArchived || false
-      ) as GetIssueCommentsResponse;
+      const result = await client.getIssueComments(args) as GetIssueCommentsResponse;
+      if (!result.issue) {
+        throw new Error(`Issue ${args.issueId} was not found`);
+      }
 
-      // Format response for better readability
-      const comments = result.issue.comments.nodes;
-      const formattedResponse = {
-        issueId: result.issue.id,
-        issueTitle: result.issue.title,
-        totalComments: comments.length,
-        hasMoreComments: result.issue.comments.pageInfo.hasNextPage,
-        nextCursor: result.issue.comments.pageInfo.endCursor,
-        comments: comments.map(comment => ({
-          id: comment.id,
-          author: comment.user.name,
-          authorEmail: comment.user.email,
-          content: comment.body,
-          createdAt: comment.createdAt,
-          updatedAt: comment.updatedAt,
-          isReply: !!comment.parent,
-          parentComment: comment.parent ? {
-            id: comment.parent.id,
-            author: comment.parent.user.name,
-            preview: comment.parent.body.length > 100
-              ? comment.parent.body.substring(0, 100) + '...'
-              : comment.parent.body
-          } : null,
-          hasReplies: !!comment.children?.nodes && comment.children.nodes.length > 0,
-          replyCount: comment.children?.nodes ? comment.children.nodes.length : 0,
-          replies: comment.children?.nodes ? comment.children.nodes.map(reply => ({
-            id: reply.id,
-            author: reply.user.name,
-            content: reply.body.length > 150
-              ? reply.body.substring(0, 150) + '...'
-              : reply.body,
-            createdAt: reply.createdAt
-          })) : []
-        }))
-      };
+      const comments = await mapCommentConnection(result.issue.comments);
 
-      return this.createJsonResponse(formattedResponse);
+      return this.createStructuredResponse(
+        `Fetched ${comments.nodes.length} comments for issue ${result.issue.title ?? args.issueId}`,
+        {
+          issue: mapCommentIssueReference(result.issue),
+          comments: comments.nodes,
+          pageInfo: comments.pageInfo,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'get issue comments');
+      return this.handleError(error, 'get issue comments');
     }
   }
 
-  /**
-   * Creates a new comment on an issue or replies to an existing comment.
-   */
   async handleCreateComment(args: CreateCommentInput): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
-      this.validateRequiredParams(args, ['body', 'issueId']);
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['body']);
+
+      if (!args.issueId && !args.parentId) {
+        throw new Error('Creating a comment requires issueId or parentId');
+      }
 
       const result = await client.createComment(args) as CreateCommentResponse;
-
-      if (!result.commentCreate.success) {
-        throw new Error('Failed to create comment');
-      }
-
-      const comment = result.commentCreate.comment;
-      const responseText = [
-        `Successfully created comment`,
-        `Comment ID: ${comment.id}`,
-        `Author: ${comment.user.name} (${comment.user.email})`,
-        `Issue: ${comment.issue.title}`,
-        `Content: ${comment.body.length > 200
-          ? comment.body.substring(0, 200) + '...'
-          : comment.body}`,
-        `Created: ${comment.createdAt}`
-      ];
-
-      if (args.parentId && comment.parent) {
-        responseText.push(`Reply to: ${comment.parent.user.name}`);
-        responseText.push(`Parent comment: ${comment.parent.body.length > 100
-          ? comment.parent.body.substring(0, 100) + '...'
-          : comment.parent.body}`);
-      }
-
-      return this.createResponse(responseText.join('\n'));
+      return this.createCommentMutationResponse(result.commentCreate, 'Created');
     } catch (error) {
-      this.handleError(error, 'create comment');
+      return this.handleError(error, 'create comment');
     }
+  }
+
+  async handleUpdateComment(args: UpdateCommentInput): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['id']);
+
+      if (
+        args.body === undefined
+        && args.bodyData === undefined
+        && args.quotedText === undefined
+      ) {
+        throw new Error('Updating a comment requires body, bodyData, or quotedText');
+      }
+
+      const result = await client.updateComment(args) as UpdateCommentResponse;
+      return this.createCommentMutationResponse(result.commentUpdate, 'Updated');
+    } catch (error) {
+      return this.handleError(error, 'update comment');
+    }
+  }
+
+  async handleDeleteComment(args: DeleteCommentInput): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['id']);
+
+      const result = await client.deleteComment(args) as DeleteCommentResponse;
+      if (!result.commentDelete.success) {
+        throw new Error('Failed to delete comment');
+      }
+
+      return this.createStructuredResponse(
+        `Deleted comment ${result.commentDelete.entityId || args.id}`,
+        {
+          success: true,
+          id: result.commentDelete.entityId,
+          lastSyncId: result.commentDelete.lastSyncId,
+        }
+      );
+    } catch (error) {
+      return this.handleError(error, 'delete comment');
+    }
+  }
+
+  async handleResolveComment(args: ResolveCommentInput): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['id']);
+
+      const result = await client.resolveComment(args) as ResolveCommentResponse;
+      return this.createCommentMutationResponse(result.commentResolve, 'Resolved');
+    } catch (error) {
+      return this.handleError(error, 'resolve comment');
+    }
+  }
+
+  async handleUnresolveComment(args: UnresolveCommentInput): Promise<BaseToolResponse> {
+    try {
+      const client = await this.verifyAuth();
+      this.validateRequiredParams(args, ['id']);
+
+      const result = await client.unresolveComment(args) as UnresolveCommentResponse;
+      return this.createCommentMutationResponse(result.commentUnresolve, 'Unresolved');
+    } catch (error) {
+      return this.handleError(error, 'unresolve comment');
+    }
+  }
+
+  private async createCommentMutationResponse(
+    payload: {
+      success: boolean;
+      comment?: unknown;
+      lastSyncId: number;
+    },
+    verb: string
+  ): Promise<BaseToolResponse> {
+    if (!payload.success) {
+      throw new Error(`Failed to ${verb.toLowerCase()} comment`);
+    }
+
+    if (!payload.comment) {
+      throw new Error('Comment mutation did not return a comment');
+    }
+
+    const comment = await mapComment(payload.comment);
+    const commentId = getString(comment, 'id');
+
+    return this.createStructuredResponse(
+      commentId ? `${verb} comment ${commentId}` : `${verb} comment`,
+      {
+        success: true,
+        lastSyncId: payload.lastSyncId,
+        comment,
+      }
+    );
   }
 }
