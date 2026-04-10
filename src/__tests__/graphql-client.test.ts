@@ -4,7 +4,6 @@ import { LinearClient } from '@linear/sdk';
 import { 
   CreateIssueInput, 
   CreateIssueResponse,
-  CreateIssuesResponse,
   UpdateIssueInput,
   UpdateIssueResponse,
   UpdateIssuesResponse,
@@ -107,6 +106,7 @@ describe('LinearGraphQLClient', () => {
       expect(mockSearchIssues).toHaveBeenCalledWith('query only hit', {
         first: 50,
       });
+      expect(mockRawRequest).not.toHaveBeenCalled();
     });
 
     it('should successfully search issues with a query and filters', async () => {
@@ -169,6 +169,7 @@ describe('LinearGraphQLClient', () => {
           after: 'cursor-1',
         })
       );
+      expect(mockRawRequest).not.toHaveBeenCalled();
     });
 
     it('keeps the free-text query separate from issue filters', async () => {
@@ -203,6 +204,7 @@ describe('LinearGraphQLClient', () => {
           },
         })
       );
+      expect(mockRawRequest).not.toHaveBeenCalled();
     });
 
     it('should handle search errors', async () => {
@@ -211,6 +213,7 @@ describe('LinearGraphQLClient', () => {
       await expect(
         graphqlClient.searchIssues('search feature')
       ).rejects.toThrow('GraphQL operation searchIssues failed: Search failed');
+      expect(mockRawRequest).not.toHaveBeenCalled();
     });
   });
 
@@ -239,15 +242,11 @@ describe('LinearGraphQLClient', () => {
       };
       
       const result: CreateIssueResponse = await graphqlClient.createIssue(input);
+      const [query, variables] = mockRawRequest.mock.calls[0];
 
-      // Verify single mutation call with direct input (not array)
-      expect(mockRawRequest).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          input: input
-        })
-      );
-
+      expect(query).toContain('issueCreate(input: $input)');
+      expect(query).not.toContain('issueBatchCreate(');
+      expect(variables).toEqual(expect.objectContaining({ input }));
       expect(result).toEqual(mockResponse.data);
       expect(mockRawRequest).toHaveBeenCalled();
     });
@@ -442,27 +441,52 @@ describe('LinearGraphQLClient', () => {
           projectInput,
           [issueInput]
         );
+        const [projectQuery, projectVariables] = mockRawRequest.mock.calls[0];
+        const [issueQuery, issueVariables] = mockRawRequest.mock.calls[1];
 
         expect(result).toEqual({
           projectCreate: projectMockResponse.data.projectCreate,
           issueBatchCreate: issueMockResponse.data.issueBatchCreate
         });
+        expect(mockRawRequest).toHaveBeenCalledTimes(2);
+        expect(projectQuery).toContain('projectCreate(input: $input)');
+        expect(projectVariables).toEqual(expect.objectContaining({ input: projectInput }));
+        expect(issueQuery).toContain('issueBatchCreate(input: $input)');
+        expect(issueVariables).toEqual(expect.objectContaining({
+          input: {
+            issues: [{ ...issueInput, projectId: 'project-1' }]
+          }
+        }));
+      });
 
-        // Verify project creation call
-        expect(mockRawRequest).toHaveBeenCalledWith(
-          expect.any(String),
-          expect.objectContaining({ input: projectInput })
-        );
-
-        // Verify issue creation call
-        expect(mockRawRequest).toHaveBeenCalledWith(
-          expect.any(String),
-          expect.objectContaining({
-            input: {
-              issues: [{ ...issueInput, projectId: 'project-1' }]
+      it('should skip batch issue creation when no project issues are supplied', async () => {
+        const projectMockResponse = {
+          data: {
+            projectCreate: {
+              success: true,
+              project: {
+                id: 'project-1',
+                name: 'New Project',
+                url: 'https://linear.app/test/project/1',
+              },
+              lastSyncId: 123,
             }
-          })
-        );
+          }
+        };
+
+        mockRawRequest.mockResolvedValueOnce(projectMockResponse);
+
+        const projectInput: ProjectInput = {
+          name: 'New Project',
+          teamIds: ['team-1']
+        };
+
+        const result = await graphqlClient.createProjectWithIssues(projectInput, []);
+
+        expect(result).toEqual({
+          projectCreate: projectMockResponse.data.projectCreate,
+        });
+        expect(mockRawRequest).toHaveBeenCalledTimes(1);
       });
 
       it('should handle project creation errors', async () => {
@@ -542,10 +566,10 @@ describe('LinearGraphQLClient', () => {
   });
 
   describe('Bulk Operations', () => {
-    it('should create multiple issues with a single mutation', async () => {
+    it('should create multiple issues through the batch mutation', async () => {
       const mockResponse = {
         data: {
-          issueCreate: {
+          issueBatchCreate: {
             success: true,
             issues: [
               {
@@ -581,16 +605,15 @@ describe('LinearGraphQLClient', () => {
       ];
 
       const result: IssueBatchResponse = await graphqlClient.createIssues(issues);
+      const [query, variables] = mockRawRequest.mock.calls[0];
 
       expect(result).toEqual(mockResponse.data);
-      // Verify single mutation call
       expect(mockRawRequest).toHaveBeenCalledTimes(1);
-      expect(mockRawRequest).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.objectContaining({
-          input: { issues }
-        })
-      );
+      expect(query).toContain('issueBatchCreate(input: $input)');
+      expect(query).not.toContain('issueCreate(input: $input)');
+      expect(variables).toEqual(expect.objectContaining({
+        input: { issues }
+      }));
     });
 
     it('should update multiple issues with a single mutation', async () => {

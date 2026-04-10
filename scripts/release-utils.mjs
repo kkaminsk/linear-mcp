@@ -27,12 +27,12 @@ export function sortedToolNames(tools) {
   return [...tools].map(tool => tool.name).sort();
 }
 
-export async function listToolsFromStdio({
+async function withStdioClient({
   command,
   args = [],
   cwd = repoRoot,
   env,
-}) {
+}, callback) {
   const transport = new StdioClientTransport({
     command,
     args,
@@ -58,13 +58,41 @@ export async function listToolsFromStdio({
   await client.connect(transport);
 
   try {
-    const result = await client.listTools();
+    const result = await callback(client);
     await new Promise(resolve => setTimeout(resolve, 50));
     return {
-      tools: result.tools,
+      result,
       stderr,
     };
   } finally {
     await client.close();
   }
+}
+
+export async function listToolsFromStdio(options) {
+  const { result, stderr } = await withStdioClient(options, client => client.listTools());
+
+  return {
+    tools: result.tools,
+    stderr,
+  };
+}
+
+export async function callToolFromStdio({
+  name,
+  arguments: toolArguments = {},
+  ...clientOptions
+}) {
+  const { result, stderr } = await withStdioClient(
+    clientOptions,
+    client => client.callTool({
+      name,
+      arguments: toolArguments,
+    })
+  );
+
+  return {
+    result,
+    stderr,
+  };
 }

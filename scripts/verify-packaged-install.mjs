@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   assert,
   buildProcessEnv,
+  callToolFromStdio,
   listToolsFromStdio,
   repoRoot,
 } from './release-utils.mjs';
@@ -61,11 +62,29 @@ try {
       LINEAR_MCP_TRANSPORT: 'stdio',
     }),
   });
+  const { result: capabilitiesResult } = await callToolFromStdio({
+    command: process.execPath,
+    args: [installedBuild],
+    cwd: tempDir,
+    env: buildProcessEnv({
+      LINEAR_MCP_TRANSPORT: 'stdio',
+    }),
+    name: 'linear_get_capabilities',
+  });
 
   assert(tools.length > 0, 'Fresh package install did not return any tools.');
   assert(
     stderr.includes('Auth:'),
     'Packaged startup must emit auth/setup diagnostics separately from install failures.'
+  );
+  assert(
+    stderr.includes(`Build: ${packageJson.name}@${packageJson.version}`),
+    'Packaged startup must emit package-derived build provenance diagnostics.'
+  );
+  assert(
+    capabilitiesResult.structuredContent?.server?.name === packageJson.name
+      && capabilitiesResult.structuredContent?.server?.version === packageJson.version,
+    'Fresh package install must report package-derived build provenance through linear_get_capabilities.'
   );
 
   console.log('Fresh package install boots and lists MCP tools.');

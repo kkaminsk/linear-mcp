@@ -16,9 +16,15 @@ import {
   getRuntimeCapabilities,
   getStreamTransportConfig,
 } from './core/capabilities.js';
+import { formatServerBuildInfo, getServerBuildInfo } from './core/server-build.js';
 import { HandlerFactory } from './core/handlers/handler.factory.js';
 import { BaseToolResponse, ToolHandlerMethod } from './core/interfaces/tool-handler.interface.js';
 import { getAdvertisedToolSchemas } from './core/types/tool.types.js';
+
+export interface LinearServerOptions {
+  auth?: LinearAuth;
+  capabilities?: RuntimeCapabilities;
+}
 
 /**
  * Main server class that handles MCP protocol interactions.
@@ -29,16 +35,17 @@ export class LinearServer {
   private auth: LinearAuth;
   private handlerFactory: HandlerFactory;
   private capabilities: RuntimeCapabilities;
+  private readonly buildInfo = getServerBuildInfo();
   private httpServer?: HttpServer;
   private readonly shutdownHandler = (): void => {
     void this.close().finally(() => process.exit(0));
   };
 
-  constructor() {
+  constructor(options: LinearServerOptions = {}) {
     this.server = new Server(
       {
-        name: 'linear-server',
-        version: '0.1.0',
+        name: this.buildInfo.name,
+        version: this.buildInfo.version,
       },
       {
         capabilities: {
@@ -47,8 +54,8 @@ export class LinearServer {
       }
     );
 
-    this.auth = new LinearAuth();
-    this.capabilities = getRuntimeCapabilities();
+    this.auth = options.auth ?? new LinearAuth();
+    this.capabilities = options.capabilities ?? getRuntimeCapabilities({ server: this.buildInfo });
 
     const apiKey = process.env.LINEAR_API_KEY;
     if (apiKey) {
@@ -186,6 +193,8 @@ export class LinearServer {
   }
 
   private logStartup(endpoint?: string): void {
+    console.error(`Build: ${formatServerBuildInfo(this.capabilities.server)}`);
+
     if (this.capabilities.transport === 'stream' && endpoint) {
       console.error(`Linear MCP server running on stream transport at ${endpoint}`);
       console.error('Use MCP streamable HTTP clients against this endpoint. Legacy /sse is not exposed.');

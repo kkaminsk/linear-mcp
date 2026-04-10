@@ -1,64 +1,23 @@
-import { createServer as createNetServer } from 'node:net';
-import { afterEach, describe, expect, it } from '@jest/globals';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getRuntimeCapabilities } from '../core/capabilities.js';
-import { LinearServer } from '../index.js';
-
-async function getAvailablePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const server = createNetServer();
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') {
-        server.close();
-        reject(new Error('Failed to acquire a test port'));
-        return;
-      }
-
-      server.close(error => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
+import { getServerBuildInfo } from '../core/server-build.js';
+import {
+  captureRuntimeEnv,
+  createRuntimeSmokeHarness,
+  restoreRuntimeEnv,
+} from './helpers/runtime-smoke.js';
 
 describe('runtime transport server', () => {
-  const originalTransport = process.env.LINEAR_MCP_TRANSPORT;
-  const originalHost = process.env.LINEAR_MCP_HOST;
-  const originalPort = process.env.LINEAR_MCP_PORT;
-  const originalPath = process.env.LINEAR_MCP_PATH;
-  const originalApiKey = process.env.LINEAR_API_KEY;
+  const runtimeEnv = captureRuntimeEnv();
+  let consoleErrorSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
 
   afterEach(() => {
-    if (originalTransport === undefined) {
-      delete process.env.LINEAR_MCP_TRANSPORT;
-    } else {
-      process.env.LINEAR_MCP_TRANSPORT = originalTransport;
-    }
-
-    if (originalHost === undefined) {
-      delete process.env.LINEAR_MCP_HOST;
-    } else {
-      process.env.LINEAR_MCP_HOST = originalHost;
-    }
-
-    if (originalPort === undefined) {
-      delete process.env.LINEAR_MCP_PORT;
-    } else {
-      process.env.LINEAR_MCP_PORT = originalPort;
-    }
-
-    if (originalPath === undefined) {
-      delete process.env.LINEAR_MCP_PATH;
-    } else {
-      process.env.LINEAR_MCP_PATH = originalPath;
-    }
-
-    if (originalApiKey === undefined) {
-      delete process.env.LINEAR_API_KEY;
-    } else {
-      process.env.LINEAR_API_KEY = originalApiKey;
-    }
+    consoleErrorSpy.mockRestore();
+    restoreRuntimeEnv(runtimeEnv);
   });
 
   it('reports a remote endpoint for stream transport capabilities', () => {
@@ -74,49 +33,35 @@ describe('runtime transport server', () => {
   });
 
   it('serves MCP over streamable HTTP and does not expose /sse', async () => {
-    const port = await getAvailablePort();
-    process.env.LINEAR_MCP_TRANSPORT = 'stream';
-    process.env.LINEAR_MCP_HOST = '127.0.0.1';
-    process.env.LINEAR_MCP_PORT = String(port);
-    process.env.LINEAR_MCP_PATH = '/mcp';
-    delete process.env.LINEAR_API_KEY;
-
-    const server = new LinearServer();
-    const client = new Client(
-      {
-        name: 'runtime-transport-test',
-        version: '1.0.0',
-      },
-      {
-        capabilities: {},
-      }
-    );
+    const harness = await createRuntimeSmokeHarness({
+      clientName: 'runtime-transport-test',
+    });
 
     try {
-      await server.run();
-
-      const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`));
-      await client.connect(transport);
-
-      const tools = await client.listTools();
+      const tools = await harness.client.listTools();
       expect(tools.tools.some(tool => tool.name === 'linear_get_capabilities')).toBe(true);
 
-      const capabilitiesResult = await client.callTool({
+      const capabilitiesResult = await harness.client.callTool({
         name: 'linear_get_capabilities',
         arguments: {},
       }) as { structuredContent?: Record<string, unknown> };
+      const buildInfo = getServerBuildInfo();
 
+      expect(consoleErrorSpy).toHaveBeenCalledWith(`Build: ${buildInfo.name}@${buildInfo.version}`);
       expect(capabilitiesResult.structuredContent).toMatchObject({
+        server: {
+          name: buildInfo.name,
+          version: buildInfo.version,
+        },
         transport: 'stream',
-        endpoint: `http://127.0.0.1:${port}/mcp`,
+        endpoint: harness.endpoint,
       });
 
-      const response = await fetch(`http://127.0.0.1:${port}/sse`);
+      const response = await fetch(`http://127.0.0.1:${harness.port}/sse`);
       expect(response.status).toBe(404);
       expect(await response.text()).toContain('/mcp');
     } finally {
-      await client.close();
-      await server.close();
+      await harness.close();
     }
   });
 });

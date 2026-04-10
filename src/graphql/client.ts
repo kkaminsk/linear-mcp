@@ -2,9 +2,7 @@ import { LinearClient } from '@linear/sdk';
 import { DocumentNode, Kind, OperationDefinitionNode } from 'graphql';
 import { 
   CreateIssueInput, 
-  CreateIssuesInput,
   CreateIssueResponse,
-  CreateIssuesResponse,
   UpdateIssueResponse,
   UpdateIssueInput,
   UpdateIssuesResponse,
@@ -209,14 +207,6 @@ export class LinearGraphQLClient {
     return this.executeData<ProjectResponse>(CREATE_PROJECT, { input });
   }
 
-  // Create batch of issues
-  async createBatchIssues(issues: CreateIssueInput[]): Promise<IssueBatchResponse> {
-    const { CREATE_BATCH_ISSUES } = await import('./mutations.js');
-    return this.executeData<IssueBatchResponse>(CREATE_BATCH_ISSUES, {
-      input: { issues }
-    });
-  }
-
   // Helper method to create a project with associated issues
   async createProjectWithIssues(projectInput: ProjectInput, issues: CreateIssueInput[]): Promise<ProjectResponse> {
     // Create project first
@@ -231,13 +221,19 @@ export class LinearGraphQLClient {
       throw new Error('Project creation did not return a project identifier');
     }
 
+    if (issues.length === 0) {
+      return {
+        projectCreate: projectResult.projectCreate,
+      };
+    }
+
     // Then create issues with project ID
     const issuesWithProject = issues.map(issue => ({
       ...issue,
       projectId
     }));
 
-    const issuesResult = await this.createBatchIssues(issuesWithProject);
+    const issuesResult = await this.createIssues(issuesWithProject);
 
     if (!issuesResult.issueBatchCreate.success) {
       throw new Error('Failed to create issues');
@@ -305,22 +301,6 @@ export class LinearGraphQLClient {
       },
       totalCount: getNumber(payloadRecord, 'totalCount'),
     };
-  }
-
-  // Search issues with pagination
-  async searchIssuesRaw(
-    filter: SearchIssuesInput['filter'],
-    first: number = 50,
-    after?: string,
-    orderBy: string = 'updatedAt'
-  ): Promise<SearchIssuesResponse> {
-    const { SEARCH_ISSUES_QUERY } = await import('./queries.js');
-    return this.executeData<SearchIssuesResponse>(SEARCH_ISSUES_QUERY, {
-      filter,
-      first,
-      after,
-      orderBy,
-    });
   }
 
   // Get teams with their states and labels

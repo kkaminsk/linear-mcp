@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { LinearAuth } from '../auth';
 import { getRuntimeCapabilities } from '../core/capabilities';
+import { getServerBuildInfo } from '../core/server-build';
 import { SubscriptionHandler } from '../features/subscriptions/handlers/subscription.handler';
 import { getAdvertisedToolSchemas } from '../core/types/tool.types';
 
@@ -44,5 +45,15 @@ describe('runtime capabilities', () => {
         transport: 'stdio',
       },
     });
+  });
+
+  it('reports packaged server build provenance through runtime capabilities', () => {
+    const buildInfo = getServerBuildInfo({ buildCommitSha: 'abc123' });
+    const capabilities = getRuntimeCapabilities({
+      transport: 'stdio',
+      server: buildInfo,
+    });
+
+    expect(capabilities.server).toEqual(buildInfo);
   });
 });

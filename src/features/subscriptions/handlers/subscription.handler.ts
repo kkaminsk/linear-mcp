@@ -16,6 +16,7 @@ export class SubscriptionHandler extends BaseHandler {
     return this.createStructuredResponse(
       'Reported Linear MCP runtime capabilities',
       {
+        server: this.runtimeCapabilities.server,
         runtime: this.runtimeCapabilities.runtime,
         transport: this.runtimeCapabilities.transport,
         endpoint: this.runtimeCapabilities.endpoint,

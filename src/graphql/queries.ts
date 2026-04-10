@@ -52,64 +52,6 @@ const COMMENT_FIELDS = `
   }
 `;
 
-export const SEARCH_ISSUES_QUERY = gql`
-  query SearchIssues(
-    $filter: IssueFilter
-    $first: Int
-    $after: String
-    $orderBy: PaginationOrderBy
-  ) {
-    issues(
-      filter: $filter
-      first: $first
-      after: $after
-      orderBy: $orderBy
-    ) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        id
-        identifier
-        title
-        description
-        url
-        state {
-          id
-          name
-          type
-          color
-        }
-        assignee {
-          id
-          name
-          email
-        }
-        team {
-          id
-          name
-          key
-        },
-        project {
-          id
-          name
-        },
-        priority
-        labels {
-          nodes {
-            id
-            name
-            color
-          }
-        }
-        createdAt
-        updatedAt
-      }
-    }
-  }
-`;
-
 export const GET_TEAMS_QUERY = gql`
   query GetTeams {
     teams {

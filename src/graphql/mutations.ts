@@ -82,28 +82,6 @@ export const CREATE_ISSUE_MUTATION = gql`
   }
 `;
 
-export const CREATE_ISSUES_MUTATION = gql`
-  mutation CreateIssues($input: [IssueCreateInput!]!) {
-    issueCreate(input: $input) {
-      success
-      issue {
-        id
-        identifier
-        title
-        url
-        team {
-          id
-          name
-        }
-        project {
-          id
-          name
-        }
-      }
-    }
-  }
-`;
-
 export const CREATE_PROJECT = gql`
   mutation CreateProject($input: ProjectCreateInput!) {
     projectCreate(input: $input) {

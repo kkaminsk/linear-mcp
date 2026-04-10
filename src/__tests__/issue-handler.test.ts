@@ -3,6 +3,7 @@ import { LinearAuth } from '../auth.js';
 import { IssueHandler } from '../features/issues/handlers/issue.handler.js';
 import {
   CreateIssueInput,
+  CreateIssuesInput,
   SearchIssuesInput,
   SearchIssuesResponse,
   UpdateIssueInput,
@@ -11,6 +12,7 @@ import {
 type MockIssueSdk = {
   issue: jest.MockedFunction<(id: string) => Promise<unknown>>;
   createIssue: jest.MockedFunction<(args: CreateIssueInput) => Promise<unknown>>;
+  createIssueBatch: jest.MockedFunction<(args: CreateIssuesInput) => Promise<unknown>>;
   updateIssue: jest.MockedFunction<(id: string, input: UpdateIssueInput) => Promise<unknown>>;
 };
 
@@ -28,6 +30,7 @@ describe('IssueHandler', () => {
     const sdk: MockIssueSdk = {
       issue: jest.fn<(id: string) => Promise<unknown>>(),
       createIssue: jest.fn<(args: CreateIssueInput) => Promise<unknown>>(),
+      createIssueBatch: jest.fn<(args: CreateIssuesInput) => Promise<unknown>>(),
       updateIssue: jest.fn<(id: string, input: UpdateIssueInput) => Promise<unknown>>(),
     };
 
@@ -121,6 +124,7 @@ describe('IssueHandler', () => {
     const result = await handler.handleCreateIssue(args);
 
     expect(mockClient.sdk.createIssue).toHaveBeenCalledWith(args);
+    expect(mockClient.sdk.createIssueBatch).not.toHaveBeenCalled();
     expect(result.structuredContent).toMatchObject({
       issue: {
         id: 'issue-2',
@@ -129,6 +133,59 @@ describe('IssueHandler', () => {
           identifier: 'TEAM-1',
         },
       },
+    });
+  });
+
+  it('uses batch issue creation for multi-issue create requests', async () => {
+    const args: CreateIssuesInput = {
+      issues: [
+        {
+          title: 'Issue 1',
+          teamId: 'team-1',
+        },
+        {
+          title: 'Issue 2',
+          teamId: 'team-1',
+        },
+      ],
+    };
+
+    mockClient.sdk.createIssueBatch.mockResolvedValueOnce({
+      success: true,
+      issues: [
+        {
+          id: 'issue-1',
+          identifier: 'TEAM-1',
+          title: 'Issue 1',
+          url: 'https://linear.app/test/issue/TEAM-1',
+        },
+        {
+          id: 'issue-2',
+          identifier: 'TEAM-2',
+          title: 'Issue 2',
+          url: 'https://linear.app/test/issue/TEAM-2',
+        },
+      ],
+      lastSyncId: 42,
+    });
+
+    const result = await handler.handleCreateIssues(args);
+
+    expect(mockClient.sdk.createIssueBatch).toHaveBeenCalledWith(args);
+    expect(mockClient.sdk.createIssue).not.toHaveBeenCalled();
+    expect(result.structuredContent).toMatchObject({
+      success: true,
+      issues: [
+        {
+          id: 'issue-1',
+          identifier: 'TEAM-1',
+        },
+        {
+          id: 'issue-2',
+          identifier: 'TEAM-2',
+        },
+      ],
+      lastSyncId: 42,
     });
   });
 

@@ -6,13 +6,14 @@ An MCP server for Linear built in TypeScript. It exposes a structured tool surfa
 
 - Default runtime is **stdio**. Set `LINEAR_MCP_TRANSPORT=stream` to expose MCP streamable HTTP at `LINEAR_MCP_PATH` (default `/mcp`). The server does **not** expose `/sse`.
 - Auth supports both `LINEAR_API_KEY` and the tool-driven OAuth flow through `linear_auth` and `linear_auth_callback`. OAuth callback `state` values are single-use.
+- `linear_get_capabilities` reports transport details together with server build provenance so clients can confirm the packaged runtime name/version they are connected to.
 - `linear_search_issues` is the query-backed issue search path. The built server advertises a required `query` string and keeps the free-text query separate from optional list-style filters.
-- Release validation is gated by `npm run verify:release`, which rebuilds the server, checks the built tool catalog, and smoke-tests a fresh packaged install.
+- Release validation is gated by `npm run verify:release`, which rebuilds the server, audits guarded Linear issue contracts, checks the built tool catalog, runs critical issue workflow smoke tests, and smoke-tests a fresh packaged install.
 
 ## What it supports
 
 ### Core work management
-- Issues: get, create, batch create, bulk update, list, search, delete, hierarchy via `parentId`, and general issue relations
+- Issues: get, create one issue with `linear_create_issue`, batch create with `linear_create_issues`, bulk update, list, search, delete, hierarchy via `parentId`, and general issue relations
 - Projects: create, update, delete, get, list, search, create-with-issues, project updates, and initiative association via `initiativeId`
 - Comments: get a single comment, list comments globally or by issue, create threaded replies with `parentId`, update, delete, resolve, and unresolve threads
 - Project milestones: create, update, delete, get, search, list, bulk create
@@ -87,6 +88,8 @@ Additional commands:
 npm run dev
 npm run test:coverage
 npm run test:integration
+npm run verify:linear-api-contracts
+npm run verify:issue-workflows
 ```
 
 ## MCP setup
@@ -113,7 +116,7 @@ Example MCP configuration:
 
 - Default mode for local clients such as Cline.
 - No remote HTTP endpoint is available in stdio mode.
-- Startup diagnostics will report whether `LINEAR_API_KEY` is configured or whether you still need to finish auth setup.
+- Startup diagnostics report the packaged server build as `Build: linear-mcp@<version>` before auth/setup messages.
 
 ### Streamable HTTP
 
@@ -134,6 +137,8 @@ LINEAR_MCP_PATH=/mcp
 
 ### Hierarchy vs. relations
 
+- Use `linear_create_issue` for a single issue and `linear_create_issues` for one or more issues submitted through the batch-create contract.
+- `linear_create_project_with_issues` creates the project first and reuses the same batch-create contract for its follow-on issues.
 - Use `parentId` on `linear_create_issue` and `linear_bulk_update_issues` for parent-child hierarchy.
 - Use `linear_create_issue_relation` and `linear_delete_issue_relation` for non-hierarchical relationships such as blocked-by or duplicate links.
 - `linear_get_issue` is the canonical hierarchy read and returns both `parent` and `children` references when they exist.
@@ -187,8 +192,22 @@ Example project update:
 - `linear_list_issues` is the filter-and-pagination path.
 - `linear_search_issues` is the free-text search path and always requires `query`.
 - Optional `teamId`, `projectId`, `assigneeId`, `stateId`, `states`, `priority`, and `cycleId` filters are applied alongside the text query.
+- `linear_search_issues` does not accept a generic `filter` object or `orderBy`; those list-style controls stay on `linear_list_issues`.
 - The search path sends `query` through Linear's search backend instead of encoding it as an issue filter field.
 - Current regression coverage covers both query-only and query-plus-filter search behavior.
+
+## Guarded issue workflow contracts
+
+- `linear_create_issue` and `linear_create_issues` stay on the SDK-backed MCP handler path, while the internal raw GraphQL issue-create helpers remain limited to the audited document shapes used by shared helper flows.
+- Raw GraphQL single-create stays on `IssueCreateInput!` and batch-create stays on `IssueBatchCreateInput!`; the repo guards against reintroducing array-shaped single-create input.
+- `linear_search_issues` stays on the SDK `searchIssues(query, options)` path. The repo does not keep a raw `SEARCH_ISSUES_QUERY` or `searchIssuesRaw` helper for free-text issue search.
+- Run `npm run verify:linear-api-contracts` to audit those guarded contracts locally. `npm run verify:release` includes the same audit before packaging.
+
+## Critical issue workflow smoke coverage
+
+- `npm run verify:issue-workflows` runs credential-free MCP-boundary smoke tests for `linear_create_issue`, `linear_create_issues`, and `linear_search_issues`.
+- The smoke harness boots the real MCP server against a fake Linear backend, so the tool boundary is exercised without live Linear credentials or network access.
+- `npm run verify:release` includes the smoke suite so critical issue workflows cannot drift silently between source and released builds.
 
 ## Marketplace and packaged installs
 
@@ -202,6 +221,7 @@ npm run verify:package-install
 
 ### Troubleshooting
 
+- Run `linear_get_capabilities` to confirm the runtime is reporting the expected packaged server name/version before debugging tool behavior.
 - If startup logs say `Auth: no LINEAR_API_KEY detected`, the package installed correctly and you only need to finish auth setup.
 - If a remote client hangs on `/sse`, switch it to the configured streamable HTTP endpoint such as `/mcp`, or run the server in stdio mode for local clients.
 - Before publishing, run `npm run verify:release` to rebuild, validate the built tool catalog, and smoke-test a fresh package install.

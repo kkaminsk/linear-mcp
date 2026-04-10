@@ -32,6 +32,46 @@ describe('tool contracts', () => {
     expect(toolSchemas.linear_search_projects.name).toBe('linear_search_projects');
   });
 
+  it('advertises issue search as query-backed instead of a generic filter-only list call', () => {
+    expect(toolSchemas.linear_search_issues.inputSchema).toMatchObject({
+      required: ['query'],
+      properties: {
+        query: {
+          type: 'string',
+        },
+        projectId: {
+          type: 'string',
+        },
+      },
+    });
+    expect(toolSchemas.linear_search_issues.inputSchema.properties).not.toHaveProperty('filter');
+    expect(toolSchemas.linear_search_issues.inputSchema.properties).not.toHaveProperty('orderBy');
+  });
+
+  it('advertises distinct single and batch issue creation schemas', () => {
+    expect(toolSchemas.linear_create_issue.inputSchema).toMatchObject({
+      required: ['title', 'teamId'],
+      properties: {
+        title: {
+          type: 'string',
+        },
+        teamId: {
+          type: 'string',
+        },
+      },
+    });
+    expect(toolSchemas.linear_create_issues.inputSchema).toMatchObject({
+      required: ['issues'],
+      properties: {
+        issues: {
+          type: 'array',
+          minItems: 1,
+        },
+      },
+    });
+    expect(toolSchemas.linear_create_issue.inputSchema).not.toEqual(toolSchemas.linear_create_issues.inputSchema);
+  });
+
   it('uses standard JSON Schema keywords without non-standard optional flags', () => {
     expect(containsOptionalKeyword(toolSchemas)).toBe(false);
   });

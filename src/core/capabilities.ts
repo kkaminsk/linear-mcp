@@ -1,3 +1,5 @@
+import { ServerBuildInfo, getServerBuildInfo } from './server-build.js';
+
 export type RuntimeTransport = 'stdio' | 'stream';
 
 export interface StreamTransportOptions {
@@ -12,6 +14,7 @@ export interface RuntimeCapabilityOptions {
   host?: string;
   port?: number;
   path?: string;
+  server?: ServerBuildInfo;
 }
 
 export interface StreamTransportConfig {
@@ -22,6 +25,7 @@ export interface StreamTransportConfig {
 }
 
 export interface RuntimeCapabilities {
+  server: ServerBuildInfo;
   runtime: 'node';
   transport: RuntimeTransport;
   streamingSupported: boolean;
@@ -70,6 +74,7 @@ export function getStreamTransportConfig(
 export function getRuntimeCapabilities(
   options: RuntimeCapabilityOptions = {}
 ): RuntimeCapabilities {
+  const server = options.server ?? getServerBuildInfo();
   const transport = options.transport
     ?? (process.env.LINEAR_MCP_TRANSPORT === 'stream' ? 'stream' : 'stdio');
   const streamConfig = transport === 'stream'
@@ -80,6 +85,7 @@ export function getRuntimeCapabilities(
   const supportsSubscriptions = streamingSupported && transport === 'stream';
 
   return {
+    server,
     runtime: 'node',
     transport,
     streamingSupported,

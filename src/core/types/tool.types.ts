@@ -877,7 +877,7 @@ const baseToolSchemas: Record<string, ToolSchema> = {
   ),
   linear_get_capabilities: tool(
     'linear_get_capabilities',
-    'Report runtime capabilities and advanced feature availability'
+    'Report runtime capabilities, server build provenance, and advanced feature availability'
   ),
   linear_get_comment: tool(
     'linear_get_comment',
