@@ -220,6 +220,44 @@ export const GET_ISSUE_COMMENTS_QUERY = gql`
   }
 `;
 
+export const SEARCH_ISSUES_QUERY = gql`
+  query SearchIssues(
+    $term: String!
+    $filter: IssueFilter
+    $first: Int
+    $after: String
+    $includeArchived: Boolean
+    $orderBy: PaginationOrderBy
+  ) {
+    searchIssues(
+      term: $term
+      filter: $filter
+      first: $first
+      after: $after
+      includeArchived: $includeArchived
+      orderBy: $orderBy
+    ) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        identifier
+        title
+        description
+        url
+        priority
+        estimate
+        dueDate
+        createdAt
+        updatedAt
+      }
+    }
+  }
+`;
+
 export const SEARCH_PROJECT_MILESTONES_QUERY = gql`
   query SearchProjectMilestones(
     $filter: ProjectMilestoneFilter

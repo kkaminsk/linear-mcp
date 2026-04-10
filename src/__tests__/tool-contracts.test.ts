@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { toolSchemas } from '../core/types/tool.types';
+import { getAdvertisedToolSchemas, toolSchemas } from '../core/types/tool.types';
 
 function containsOptionalKeyword(value: unknown): boolean {
   if (Array.isArray(value)) {
@@ -76,6 +76,16 @@ describe('tool contracts', () => {
     expect(containsOptionalKeyword(toolSchemas)).toBe(false);
   });
 
+  it('avoids top-level union combinators in advertised tool schemas for Claude compatibility', () => {
+    expect(
+      getAdvertisedToolSchemas().every(tool =>
+        !['anyOf', 'allOf', 'oneOf'].some(keyword =>
+          Object.prototype.hasOwnProperty.call(tool.inputSchema, keyword)
+        )
+      )
+    ).toBe(true);
+  });
+
   it('uses parentId consistently for threaded comment creation', () => {
     expect(toolSchemas.linear_create_comment.inputSchema).toMatchObject({
       required: ['body'],
@@ -84,31 +94,37 @@ describe('tool contracts', () => {
           type: 'string',
         },
       },
-      anyOf: [
-        { required: ['issueId'] },
-        { required: ['parentId'] },
-      ],
+      not: {
+        properties: {
+          issueId: false,
+          parentId: false,
+        },
+      },
     });
   });
 
   it('rejects conflicting issue state filters in list and search schemas', () => {
     expect(toolSchemas.linear_list_issues.inputSchema).toMatchObject({
-      allOf: [
-        {
-          not: {
-            required: ['stateId', 'states'],
+      not: {
+        required: ['stateId', 'states'],
+        properties: {
+          states: {
+            type: 'array',
+            minItems: 1,
           },
         },
-      ],
+      },
     });
     expect(toolSchemas.linear_search_issues.inputSchema).toMatchObject({
-      allOf: [
-        {
-          not: {
-            required: ['stateId', 'states'],
+      not: {
+        required: ['stateId', 'states'],
+        properties: {
+          states: {
+            type: 'array',
+            minItems: 1,
           },
         },
-      ],
+      },
     });
   });
 
@@ -124,11 +140,13 @@ describe('tool contracts', () => {
   it('requires at least one editable field when updating a comment', () => {
     expect(toolSchemas.linear_update_comment.inputSchema).toMatchObject({
       required: ['id'],
-      anyOf: [
-        { required: ['body'] },
-        { required: ['bodyData'] },
-        { required: ['quotedText'] },
-      ],
+      not: {
+        properties: {
+          body: false,
+          bodyData: false,
+          quotedText: false,
+        },
+      },
     });
   });
 

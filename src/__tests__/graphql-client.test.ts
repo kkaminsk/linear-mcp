@@ -49,19 +49,16 @@ describe('LinearGraphQLClient', () => {
   let graphqlClient: LinearGraphQLClient;
   let linearClient: LinearClient;
   let mockRawRequest: jest.MockedFunction<(query: string, variables?: Record<string, unknown>) => Promise<GraphQLResponse<unknown>>>;
-  let mockSearchIssues: jest.MockedFunction<(query: string, options?: Record<string, unknown>) => Promise<unknown>>;
   let mockDeleteProject: jest.MockedFunction<(id: string) => Promise<unknown>>;
 
   beforeEach(() => {
     mockRawRequest = jest.fn();
-    mockSearchIssues = jest.fn<(query: string, options?: Record<string, unknown>) => Promise<unknown>>();
     mockDeleteProject = jest.fn<(id: string) => Promise<unknown>>();
     // Mock the Linear client's GraphQL client
     linearClient = {
       client: {
         rawRequest: mockRawRequest
       },
-      searchIssues: mockSearchIssues,
       deleteProject: mockDeleteProject,
     } as unknown as LinearClient;
 
@@ -73,20 +70,24 @@ describe('LinearGraphQLClient', () => {
 
   describe('searchIssues', () => {
     it('should successfully search issues with only a free-text query', async () => {
-      mockSearchIssues.mockResolvedValueOnce({
-        nodes: [
-          {
-            id: 'issue-9',
-            identifier: 'TEST-9',
-            title: 'Query only hit',
-            url: 'https://linear.app/test/issue/TEST-9'
+      mockRawRequest.mockResolvedValueOnce({
+        data: {
+          searchIssues: {
+            nodes: [
+              {
+                id: 'issue-9',
+                identifier: 'TEST-9',
+                title: 'Query only hit',
+                url: 'https://linear.app/test/issue/TEST-9'
+              }
+            ],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null
+            },
+            totalCount: 1,
           }
-        ],
-        pageInfo: {
-          hasNextPage: false,
-          endCursor: null
-        },
-        totalCount: 1,
+        }
       });
 
       const result: SearchIssuesResponse = await graphqlClient.searchIssues('query only hit');
@@ -108,27 +109,30 @@ describe('LinearGraphQLClient', () => {
         },
         totalCount: 1,
       });
-      expect(mockSearchIssues).toHaveBeenCalledWith('query only hit', {
-        first: 50,
-      });
-      expect(mockRawRequest).not.toHaveBeenCalled();
+      const [query, variables] = mockRawRequest.mock.calls[0];
+      expect(query).toContain('searchIssues');
+      expect(variables).toEqual({ term: 'query only hit', first: 50 });
     });
 
     it('should successfully search issues with a query and filters', async () => {
-      mockSearchIssues.mockResolvedValueOnce({
-        nodes: [
-          {
-            id: 'issue-1',
-            identifier: 'TEST-1',
-            title: 'Bug in search feature',
-            url: 'https://linear.app/test/issue/TEST-1'
+      mockRawRequest.mockResolvedValueOnce({
+        data: {
+          searchIssues: {
+            nodes: [
+              {
+                id: 'issue-1',
+                identifier: 'TEST-1',
+                title: 'Bug in search feature',
+                url: 'https://linear.app/test/issue/TEST-1'
+              }
+            ],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null
+            },
+            totalCount: 1,
           }
-        ],
-        pageInfo: {
-          hasNextPage: false,
-          endCursor: null
-        },
-        totalCount: 1,
+        }
       });
 
       const result: SearchIssuesResponse = await graphqlClient.searchIssues('search feature', {
@@ -160,31 +164,34 @@ describe('LinearGraphQLClient', () => {
         },
         totalCount: 1,
       });
-      expect(mockSearchIssues).toHaveBeenCalledWith(
-        'search feature',
-        expect.objectContaining({
-          filter: {
-            project: {
-              id: {
-                eq: 'project-1'
-              }
+      const [query, variables] = mockRawRequest.mock.calls[0];
+      expect(query).toContain('searchIssues');
+      expect(variables).toEqual({
+        term: 'search feature',
+        filter: {
+          project: {
+            id: {
+              eq: 'project-1'
             }
-          },
-          first: 1,
-          after: 'cursor-1',
-        })
-      );
-      expect(mockRawRequest).not.toHaveBeenCalled();
+          }
+        },
+        first: 1,
+        after: 'cursor-1',
+      });
     });
 
     it('keeps the free-text query separate from issue filters', async () => {
-      mockSearchIssues.mockResolvedValueOnce({
-        nodes: [],
-        pageInfo: {
-          hasNextPage: false,
-          endCursor: null
-        },
-        totalCount: 0,
+      mockRawRequest.mockResolvedValueOnce({
+        data: {
+          searchIssues: {
+            nodes: [],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null
+            },
+            totalCount: 0,
+          }
+        }
       });
 
       await graphqlClient.searchIssues('TEST-123', {
@@ -197,28 +204,27 @@ describe('LinearGraphQLClient', () => {
         },
       });
 
-      expect(mockSearchIssues).toHaveBeenCalledWith(
-        'TEST-123',
-        expect.objectContaining({
-          filter: {
-            state: {
-              name: {
-                in: ['Done']
-              }
+      const [, variables] = mockRawRequest.mock.calls[0];
+      expect(variables).toEqual(expect.objectContaining({
+        term: 'TEST-123',
+        filter: {
+          state: {
+            name: {
+              in: ['Done']
             }
-          },
-        })
-      );
-      expect(mockRawRequest).not.toHaveBeenCalled();
+          }
+        },
+      }));
+      // The query term must NOT leak into the filter object
+      expect((variables as Record<string, unknown>).filter).not.toHaveProperty('search');
     });
 
     it('should handle search errors', async () => {
-      mockSearchIssues.mockRejectedValueOnce(new Error('Search failed'));
+      mockRawRequest.mockRejectedValueOnce(new Error('Search failed'));
 
       await expect(
         graphqlClient.searchIssues('search feature')
-      ).rejects.toThrow('GraphQL operation searchIssues failed: Search failed');
-      expect(mockRawRequest).not.toHaveBeenCalled();
+      ).rejects.toThrow('GraphQL operation SearchIssues failed');
     });
   });
 

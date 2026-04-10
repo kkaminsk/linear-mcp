@@ -56,10 +56,7 @@ import {
   GetProjectMilestoneResponse
 } from '../features/milestones/types/milestone.types.js';
 import {
-  asRecord,
   getBoolean,
-  getNumber,
-  toPageInfo,
 } from '../types/sdk.utils.js';
 
 export interface GraphQLErrorDetail {
@@ -296,40 +293,40 @@ export class LinearGraphQLClient {
     return this.executeData<LabelResponse>(CREATE_ISSUE_LABELS, { labels });
   }
 
-  // Search issues with pagination
+  // Search issues with pagination — uses raw GraphQL to avoid SDK
+  // variable-mapping bugs (the SDK's searchIssues can leak the query
+  // term into the $filter variable on some SDK/API version combinations).
   async searchIssues(
     query: string,
     options: Omit<SearchIssuesInput, 'query'> = {}
   ): Promise<SearchIssuesResponse> {
-    const searchOptions: {
-      filter?: SearchIssuesInput['filter'];
-      first: number;
-      after?: string;
-    } = {
+    const { SEARCH_ISSUES_QUERY } = await import('./queries.js');
+
+    const variables: Record<string, unknown> = {
+      term: query,
       first: options.first ?? 50,
     };
 
     if (options.filter && Object.keys(options.filter).length > 0) {
-      searchOptions.filter = options.filter;
+      variables.filter = options.filter;
     }
 
     if (options.after !== undefined) {
-      searchOptions.after = options.after;
+      variables.after = options.after;
     }
 
-    const payload = await this.executeSdk(
-      'searchIssues',
-      () => this.linearClient.searchIssues(query, searchOptions)
-    );
-    const payloadRecord = asRecord(payload);
-    const nodes = Array.isArray(payloadRecord.nodes) ? payloadRecord.nodes as Issue[] : [];
+    const result = await this.executeData<{ searchIssues: {
+      totalCount?: number;
+      pageInfo: { hasNextPage: boolean; endCursor: string | null };
+      nodes: Issue[];
+    } }>(SEARCH_ISSUES_QUERY, variables);
 
     return {
       issues: {
-        pageInfo: toPageInfo(payloadRecord.pageInfo) as SearchIssuesResponse['issues']['pageInfo'],
-        nodes,
+        pageInfo: result.searchIssues.pageInfo,
+        nodes: result.searchIssues.nodes ?? [],
       },
-      totalCount: getNumber(payloadRecord, 'totalCount'),
+      totalCount: result.searchIssues.totalCount,
     };
   }
 

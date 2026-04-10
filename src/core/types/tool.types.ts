@@ -140,6 +140,22 @@ const objectSchema = (
   ...(required.length > 0 ? { required } : {}),
 });
 
+const requireAtLeastOnePropertyRule = (propertyNames: string[]): JsonSchema => ({
+  not: {
+    properties: Object.fromEntries(propertyNames.map(propertyName => [propertyName, false])),
+  },
+});
+
+const forbidPropertyCombinationRule = (
+  propertyNames: string[],
+  extras: JsonSchema = {}
+): JsonSchema => ({
+  not: {
+    required: propertyNames,
+    ...extras,
+  },
+});
+
 const tool = (
   name: string,
   description: string,
@@ -251,15 +267,17 @@ const agentSessionUserStateSchema = objectSchema(
   },
   ['userId']
 );
-const issueStateConflictRule = {
-  allOf: [
-    {
-      not: {
-        required: ['stateId', 'states'],
+const issueStateConflictRule = forbidPropertyCombinationRule(
+  ['stateId', 'states'],
+  {
+    properties: {
+      states: {
+        type: 'array',
+        minItems: 1,
       },
     },
-  ],
-};
+  }
+);
 
 const commentPageFields = {
   first: numberProp('Number of results to return'),
@@ -292,30 +310,23 @@ const commentUpdateProperties = {
   quotedText: stringProp('Updated quoted source text'),
 };
 
-const createCommentToolSchema: ToolSchema = {
-  name: 'linear_create_comment',
-  description: 'Create a comment or threaded reply',
-  inputSchema: {
-    ...objectSchema(commentCreateProperties, ['body']),
-    anyOf: [
-      { required: ['issueId'] },
-      { required: ['parentId'] },
-    ],
-  },
-};
+const createCommentToolSchema = tool(
+  'linear_create_comment',
+  'Create a comment or threaded reply. Provide issueId for a top-level comment or parentId for a reply.',
+  commentCreateProperties,
+  ['body'],
+  false,
+  requireAtLeastOnePropertyRule(['issueId', 'parentId'])
+);
 
-const updateCommentToolSchema: ToolSchema = {
-  name: 'linear_update_comment',
-  description: 'Update a comment',
-  inputSchema: {
-    ...objectSchema(commentUpdateProperties, ['id']),
-    anyOf: [
-      { required: ['body'] },
-      { required: ['bodyData'] },
-      { required: ['quotedText'] },
-    ],
-  },
-};
+const updateCommentToolSchema = tool(
+  'linear_update_comment',
+  'Update a comment. Provide at least one of body, bodyData, or quotedText.',
+  commentUpdateProperties,
+  ['id'],
+  false,
+  requireAtLeastOnePropertyRule(['body', 'bodyData', 'quotedText'])
+);
 
 const baseToolSchemas: Record<string, ToolSchema> = {
   linear_auth: tool(

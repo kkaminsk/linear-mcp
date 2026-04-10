@@ -7,6 +7,7 @@ An MCP server for Linear built in TypeScript. It exposes a structured tool surfa
 - Default runtime is **stdio**. Set `LINEAR_MCP_TRANSPORT=stream` to expose MCP streamable HTTP at `LINEAR_MCP_PATH` (default `/mcp`). The server does **not** expose `/sse`.
 - Auth supports `LINEAR_API_KEY`, the `LINEAR_ACCESS_TOKEN` alias, and the tool-driven OAuth flow through `linear_auth` and `linear_auth_callback`. OAuth callback `state` values are single-use.
 - Advertised tool schemas are enforced at runtime before handler dispatch, so malformed tool payloads fail with structured validation errors at the MCP boundary.
+- Advertised tool schemas avoid top-level `oneOf`/`allOf`/`anyOf` combinators so Claude-compatible MCP clients can ingest the full tool catalog.
 - `linear_get_capabilities` reports transport details together with server build provenance so clients can confirm the packaged runtime name/version they are connected to.
 - `linear_search_issues` is the query-backed issue search path. The built server advertises a required `query` string and keeps the free-text query separate from optional list-style filters.
 - Release validation is gated by `npm run verify:release`, which rebuilds the server, audits guarded Linear issue contracts, checks the built tool catalog, runs critical issue workflow smoke tests, and smoke-tests a fresh packaged install.

@@ -55,7 +55,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
   async handleCreateIssue(args: CreateIssueInput): Promise<BaseToolResponse> {
     try {
       const client = await this.verifyAuth();
-      this.validateRequiredParams(args, ['teamId']);
+      this.validateRequiredParams(args, ['title', 'teamId']);
 
       const payload = await client.executeSdk(
         'createIssue',
@@ -117,39 +117,28 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
         throw new Error('issueIds must be a non-empty array');
       }
 
-      if (args.issueIds.length === 1) {
-        const payload = await client.executeSdk(
-          'updateIssue',
-          () => client.sdk.updateIssue(args.issueIds[0], args.update)
-        );
-
-        const issue = await resolveValue(asRecord(payload).issue as Promise<unknown> | unknown);
-        const issueData = await this.mapIssueSummary(issue);
-
-        return this.createStructuredResponse(
-          `Updated issue ${getString(issueData, 'identifier') ?? args.issueIds[0]}`,
-          {
+      const results = await Promise.all(
+        args.issueIds.map(async (issueId) => {
+          const payload = await client.executeSdk(
+            'updateIssue',
+            () => client.sdk.updateIssue(issueId, args.update)
+          );
+          const issue = await resolveValue(asRecord(payload).issue as Promise<unknown> | unknown);
+          return {
             success: getBoolean(payload, 'success') ?? true,
-            issues: [issueData],
-          }
-        );
-      }
-
-      const payload = await client.executeSdk(
-        'updateIssueBatch',
-        () => client.sdk.updateIssueBatch(args.issueIds, args.update)
+            issue: await this.mapIssueSummary(issue),
+          };
+        })
       );
 
-      const issues = Array.isArray(asRecord(payload).issues)
-        ? asRecord(payload).issues as unknown[]
-        : [];
+      const allSuccess = results.every(r => r.success);
+      const issueData = results.map(r => r.issue);
 
       return this.createStructuredResponse(
-        `Updated ${issues.length} issues`,
+        `Updated ${issueData.length} issue${issueData.length === 1 ? '' : 's'}`,
         {
-          success: getBoolean(payload, 'success') ?? true,
-          issues: await Promise.all(issues.map(issue => this.mapIssueSummary(issue))),
-          lastSyncId: getNumber(payload, 'lastSyncId'),
+          success: allSuccess,
+          issues: issueData,
         }
       );
     } catch (error) {
@@ -426,6 +415,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
 
     return compactObject({
       ...(await this.mapIssueSummary(issue)),
+      description: getString(issueRecord, 'description'),
       assignee: this.mapUserReference(assignee),
       parent: parent ? await this.mapIssueReference(parent) : undefined,
       children: children
@@ -461,7 +451,6 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
       id: getString(issueRecord, 'id'),
       identifier: getString(issueRecord, 'identifier'),
       title: getString(issueRecord, 'title'),
-      description: getString(issueRecord, 'description'),
       url: getString(issueRecord, 'url'),
       priority: getNumber(issueRecord, 'priority'),
       estimate: getNumber(issueRecord, 'estimate'),

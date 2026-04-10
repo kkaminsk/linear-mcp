@@ -99,31 +99,31 @@ export const guardedIssueWorkflowContracts = [
     ],
     forbiddenSnippets: [
       'SEARCH_ISSUES_QUERY',
-      'searchIssuesRaw(',
     ],
   },
   {
     name: 'issue search client ownership',
-    owner: 'LinearGraphQLClient.searchIssues SDK path',
+    owner: 'LinearGraphQLClient.searchIssues raw GraphQL path',
     file: 'src/graphql/client.ts',
     requiredSnippets: [
       'async searchIssues(',
-      "const payload = await this.executeSdk(",
-      '() => this.linearClient.searchIssues(query, searchOptions)',
+      "const { SEARCH_ISSUES_QUERY } = await import('./queries.js');",
+      'term: query',
     ],
     forbiddenSnippets: [
-      'searchIssuesRaw(',
-      'SEARCH_ISSUES_QUERY',
+      'this.linearClient.searchIssues(',
     ],
   },
   {
-    name: 'issue search query exports',
-    owner: 'No raw issue search GraphQL document',
+    name: 'issue search query document',
+    owner: 'Raw issue search GraphQL document',
     file: 'src/graphql/queries.ts',
-    requiredSnippets: [],
-    forbiddenSnippets: [
+    requiredSnippets: [
       'SEARCH_ISSUES_QUERY',
       'query SearchIssues(',
+      '$term: String!',
+      '$filter: IssueFilter',
     ],
+    forbiddenSnippets: [],
   },
 ];
