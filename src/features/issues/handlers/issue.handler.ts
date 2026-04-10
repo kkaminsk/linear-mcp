@@ -1,3 +1,4 @@
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { BaseHandler } from '../../../core/handlers/base.handler.js';
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 import { LinearAuth } from '../../../auth.js';
@@ -159,6 +160,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
   async handleListIssues(args: ListIssuesInput): Promise<BaseToolResponse> {
     try {
       const client = await this.verifyAuth();
+      this.validateStateFilterConflict(args);
       const filter = this.buildIssueFilter(args);
 
       const connection = await client.executeSdk(
@@ -188,6 +190,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
     try {
       const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['query']);
+      this.validateStateFilterConflict(args);
       const filter = this.buildIssueFilter(args);
       const searchOptions: Omit<SearchIssuesInput, 'query'> = {
         first: args.first ?? 50,
@@ -248,15 +251,64 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
         throw new Error('ids must be a non-empty array');
       }
 
-      await Promise.all(
-        args.ids.map(id => client.executeSdk('deleteIssue', () => client.sdk.deleteIssue(id)))
+      const results = await Promise.all(
+        args.ids.map(async id => {
+          try {
+            const payload = await client.executeSdk('deleteIssue', () => client.sdk.deleteIssue(id));
+
+            if (!(getBoolean(payload, 'success') ?? true)) {
+              return {
+                id,
+                success: false,
+                message: 'Issue deletion returned success false.',
+              };
+            }
+
+            return {
+              id,
+              success: true,
+            };
+          } catch (error) {
+            return {
+              id,
+              success: false,
+              message: this.getDeleteFailureMessage(error),
+            };
+          }
+        })
       );
+
+      const deletedIds = results.filter(result => result.success).map(result => result.id);
+      const failed = results
+        .filter((result): result is { id: string; success: false; message: string } => !result.success)
+        .map(result => ({
+          id: result.id,
+          message: result.message,
+        }));
+
+      if (failed.length > 0) {
+        return this.createErrorResponse(
+          `Deleted ${deletedIds.length} of ${args.ids.length} issues`,
+          {
+            success: false,
+            requestedIds: args.ids,
+            deletedIds,
+            failedIds: failed.map(result => result.id),
+            failed,
+            error: {
+              type: 'partial',
+              message: 'One or more requested issues could not be deleted.',
+            },
+          }
+        );
+      }
 
       return this.createStructuredResponse(
         `Deleted ${args.ids.length} issues`,
         {
           success: true,
           ids: args.ids,
+          deletedIds,
         }
       );
     } catch (error) {
@@ -344,6 +396,21 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
     }
 
     return filter;
+  }
+
+  private validateStateFilterConflict(
+    args: Pick<ListIssuesInput, 'stateId' | 'states'>
+  ): void {
+    if (args.stateId && args.states?.length) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        'stateId and states cannot both be provided in the same issue query.'
+      );
+    }
+  }
+
+  private getDeleteFailureMessage(error: unknown): string {
+    return error instanceof Error ? error.message : 'Unknown delete failure';
   }
 
   private async mapIssueDetail(issue: unknown): Promise<Record<string, unknown>> {

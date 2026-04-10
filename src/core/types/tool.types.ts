@@ -1,4 +1,10 @@
 import { RuntimeCapabilities, getRuntimeCapabilities } from '../capabilities.js';
+import {
+  AGENT_FLEXIBLE_ARRAY_MAX_ITEMS,
+  AGENT_FLEXIBLE_MAX_DEPTH,
+  AGENT_FLEXIBLE_OBJECT_MAX_PROPERTIES,
+  AGENT_FLEXIBLE_STRING_MAX_LENGTH,
+} from '../../features/agents/types/agent.types.js';
 
 type JsonSchema = Record<string, unknown>;
 type ToolSchema = {
@@ -36,6 +42,82 @@ const looseObjectProp = (description: string): JsonSchema => ({
   additionalProperties: true,
 });
 
+const agentFlexibleValueSchemaCache = new Map<number, JsonSchema>();
+const agentFlexibleObjectSchemaCache = new Map<number, JsonSchema>();
+const agentFlexibleArraySchemaCache = new Map<number, JsonSchema>();
+
+const createAgentFlexibleValueSchema = (remainingDepth: number): JsonSchema => {
+  const cached = agentFlexibleValueSchemaCache.get(remainingDepth);
+  if (cached) {
+    return cached;
+  }
+
+  const schema: JsonSchema = {
+    anyOf: [
+      {
+        type: 'string',
+        maxLength: AGENT_FLEXIBLE_STRING_MAX_LENGTH,
+      },
+      {
+        type: 'number',
+      },
+      {
+        type: 'boolean',
+      },
+      {
+        type: 'null',
+      },
+    ],
+  };
+
+  if (remainingDepth > 0) {
+    (schema.anyOf as JsonSchema[]).push(
+      createAgentFlexibleObjectSchema(remainingDepth - 1),
+      createAgentFlexibleArraySchema(remainingDepth - 1)
+    );
+  }
+
+  agentFlexibleValueSchemaCache.set(remainingDepth, schema);
+  return schema;
+};
+
+const createAgentFlexibleObjectSchema = (remainingDepth: number): JsonSchema => {
+  const cached = agentFlexibleObjectSchemaCache.get(remainingDepth);
+  if (cached) {
+    return cached;
+  }
+
+  const schema: JsonSchema = {
+    type: 'object',
+    maxProperties: AGENT_FLEXIBLE_OBJECT_MAX_PROPERTIES,
+    additionalProperties: createAgentFlexibleValueSchema(remainingDepth),
+  };
+
+  agentFlexibleObjectSchemaCache.set(remainingDepth, schema);
+  return schema;
+};
+
+const createAgentFlexibleArraySchema = (remainingDepth: number): JsonSchema => {
+  const cached = agentFlexibleArraySchemaCache.get(remainingDepth);
+  if (cached) {
+    return cached;
+  }
+
+  const schema: JsonSchema = {
+    type: 'array',
+    maxItems: AGENT_FLEXIBLE_ARRAY_MAX_ITEMS,
+    items: createAgentFlexibleValueSchema(remainingDepth),
+  };
+
+  agentFlexibleArraySchemaCache.set(remainingDepth, schema);
+  return schema;
+};
+
+const boundedFlexibleObjectProp = (description: string): JsonSchema => ({
+  ...createAgentFlexibleObjectSchema(AGENT_FLEXIBLE_MAX_DEPTH - 1),
+  description,
+});
+
 const arrayProp = (
   description: string,
   items: JsonSchema,
@@ -63,11 +145,15 @@ const tool = (
   description: string,
   properties: Record<string, JsonSchema> = {},
   required: string[] = [],
-  additionalProperties: boolean = false
+  additionalProperties: boolean = false,
+  extras: JsonSchema = {}
 ): ToolSchema => ({
   name,
   description,
-  inputSchema: objectSchema(properties, required, additionalProperties),
+  inputSchema: {
+    ...objectSchema(properties, required, additionalProperties),
+    ...extras,
+  },
 });
 
 const pageFields = {
@@ -151,6 +237,29 @@ const projectUpdateProperties = {
 const issueItemSchema = objectSchema(issueInputProperties, ['title', 'teamId']);
 const projectSchema = objectSchema(projectProperties, ['name', 'teamIds']);
 const projectUpdateSchema = objectSchema(projectUpdateProperties);
+const agentExternalUrlSchema = objectSchema(
+  {
+    label: stringProp('External URL label'),
+    url: stringProp('External URL'),
+  },
+  ['label', 'url']
+);
+const agentSessionUserStateSchema = objectSchema(
+  {
+    userId: stringProp('User ID'),
+    lastReadAt: stringProp('Last read timestamp'),
+  },
+  ['userId']
+);
+const issueStateConflictRule = {
+  allOf: [
+    {
+      not: {
+        required: ['stateId', 'states'],
+      },
+    },
+  ],
+};
 
 const commentPageFields = {
   first: numberProp('Number of results to return'),
@@ -273,7 +382,10 @@ const baseToolSchemas: Record<string, ToolSchema> = {
       cycleId: stringProp('Filter by cycle ID'),
       ...pageFields,
       orderBy: stringProp('Pagination order field'),
-    }
+    },
+    [],
+    false,
+    issueStateConflictRule
   ),
   linear_search_issues: tool(
     'linear_search_issues',
@@ -289,7 +401,9 @@ const baseToolSchemas: Record<string, ToolSchema> = {
       cycleId: stringProp('Optional cycle ID filter'),
       ...pageFields,
     },
-    ['query']
+    ['query'],
+    false,
+    issueStateConflictRule
   ),
   linear_create_issue_relation: tool(
     'linear_create_issue_relation',
@@ -781,13 +895,7 @@ const baseToolSchemas: Record<string, ToolSchema> = {
       externalLink: stringProp('External agent-hosted page URL'),
       externalUrls: arrayProp(
         'External resources associated with the session',
-        objectSchema(
-          {
-            label: stringProp('External URL label'),
-            url: stringProp('External URL'),
-          },
-          ['label', 'url']
-        )
+        agentExternalUrlSchema
       ),
     },
     ['issueId']
@@ -800,13 +908,7 @@ const baseToolSchemas: Record<string, ToolSchema> = {
       externalLink: stringProp('External agent-hosted page URL'),
       externalUrls: arrayProp(
         'External resources associated with the session',
-        objectSchema(
-          {
-            label: stringProp('External URL label'),
-            url: stringProp('External URL'),
-          },
-          ['label', 'url']
-        )
+        agentExternalUrlSchema
       ),
     },
     ['commentId']
@@ -818,29 +920,17 @@ const baseToolSchemas: Record<string, ToolSchema> = {
       id: stringProp('Agent session ID'),
       addedExternalUrls: arrayProp(
         'External URLs to add to the session',
-        objectSchema(
-          {
-            label: stringProp('External URL label'),
-            url: stringProp('External URL'),
-          },
-          ['label', 'url']
-        )
+        agentExternalUrlSchema
       ),
       dismissedAt: stringProp('Dismissed timestamp'),
       externalLink: stringProp('Updated external agent-hosted page URL'),
       externalUrls: arrayProp(
         'Replacement external URLs for the session',
-        objectSchema(
-          {
-            label: stringProp('External URL label'),
-            url: stringProp('External URL'),
-          },
-          ['label', 'url']
-        )
+        agentExternalUrlSchema
       ),
-      plan: looseObjectProp('Dynamic agent execution plan'),
+      plan: boundedFlexibleObjectProp('Dynamic agent execution plan'),
       removedExternalUrls: arrayProp('External URLs to remove', { type: 'string' }),
-      userState: arrayProp('User-specific session state entries', looseObjectProp('User state entry')),
+      userState: arrayProp('User-specific session state entries', agentSessionUserStateSchema),
     },
     ['id']
   ),
@@ -856,7 +946,7 @@ const baseToolSchemas: Record<string, ToolSchema> = {
     'linear_list_agent_activities',
     'List agent activities',
     {
-      filter: looseObjectProp('Agent activity filter object'),
+      filter: boundedFlexibleObjectProp('Agent activity filter object'),
       ...pageFields,
       orderBy: stringProp('Pagination order field'),
     }
@@ -866,12 +956,12 @@ const baseToolSchemas: Record<string, ToolSchema> = {
     'Create an agent activity',
     {
       agentSessionId: stringProp('Agent session ID'),
-      content: looseObjectProp('Agent activity content payload'),
-      contextualMetadata: looseObjectProp('Contextual metadata'),
+      content: boundedFlexibleObjectProp('Agent activity content payload'),
+      contextualMetadata: boundedFlexibleObjectProp('Contextual metadata'),
       ephemeral: booleanProp('Whether the activity is ephemeral'),
       id: stringProp('Agent activity ID'),
       signal: stringProp('Agent activity signal'),
-      signalMetadata: looseObjectProp('Signal metadata'),
+      signalMetadata: boundedFlexibleObjectProp('Signal metadata'),
     },
     ['agentSessionId', 'content']
   ),

@@ -3,6 +3,7 @@ import { DocumentNode, Kind, OperationDefinitionNode } from 'graphql';
 import { 
   CreateIssueInput, 
   CreateIssueResponse,
+  DeleteIssuesResponse,
   UpdateIssueResponse,
   UpdateIssueInput,
   UpdateIssuesResponse,
@@ -15,6 +16,7 @@ import {
 import {
   ProjectInput,
   ProjectResponse,
+  ProjectWithIssuesOutcome,
   SearchProjectsResponse,
   GetProjectResponse
 } from '../features/projects/types/project.types.js';
@@ -55,6 +57,7 @@ import {
 } from '../features/milestones/types/milestone.types.js';
 import {
   asRecord,
+  getBoolean,
   getNumber,
   toPageInfo,
 } from '../types/sdk.utils.js';
@@ -208,41 +211,68 @@ export class LinearGraphQLClient {
   }
 
   // Helper method to create a project with associated issues
-  async createProjectWithIssues(projectInput: ProjectInput, issues: CreateIssueInput[]): Promise<ProjectResponse> {
-    // Create project first
+  async createProjectWithIssues(
+    projectInput: ProjectInput,
+    issues: CreateIssueInput[]
+  ): Promise<ProjectWithIssuesOutcome> {
     const projectResult = await this.createProject(projectInput);
-    
-    if (!projectResult.projectCreate.success) {
-      throw new Error('Failed to create project');
-    }
 
+    const project = projectResult.projectCreate.project;
     const projectId = projectResult.projectCreate.project?.id;
-    if (!projectId) {
-      throw new Error('Project creation did not return a project identifier');
-    }
-
-    if (issues.length === 0) {
+    if (!projectResult.projectCreate.success || !projectId || !project) {
       return {
+        success: false,
+        failedStep: 'projectCreate',
+        message: 'Project creation did not complete before issue creation began.',
+        issueCreationAttempted: false,
+        compensationAttempted: false,
+        lastSyncId: projectResult.projectCreate.lastSyncId,
         projectCreate: projectResult.projectCreate,
       };
     }
 
-    // Then create issues with project ID
+    if (issues.length === 0) {
+      return {
+        success: true,
+        project,
+        issues: [],
+        lastSyncId: projectResult.projectCreate.lastSyncId,
+        projectCreate: projectResult.projectCreate,
+      };
+    }
+
     const issuesWithProject = issues.map(issue => ({
       ...issue,
       projectId
     }));
 
-    const issuesResult = await this.createIssues(issuesWithProject);
+    try {
+      const issuesResult = await this.createIssues(issuesWithProject);
 
-    if (!issuesResult.issueBatchCreate.success) {
-      throw new Error('Failed to create issues');
+      if (!issuesResult.issueBatchCreate.success) {
+        return await this.compensateProjectIssueFailure(
+          project,
+          projectResult,
+          issuesResult
+        );
+      }
+
+      return {
+        success: true,
+        project,
+        issues: issuesResult.issueBatchCreate.issues,
+        lastSyncId: issuesResult.issueBatchCreate.lastSyncId ?? projectResult.projectCreate.lastSyncId,
+        projectCreate: projectResult.projectCreate,
+        issueBatchCreate: issuesResult.issueBatchCreate,
+      };
+    } catch (error) {
+      return await this.compensateProjectIssueFailure(
+        project,
+        projectResult,
+        undefined,
+        error
+      );
     }
-
-    return {
-      projectCreate: projectResult.projectCreate,
-      issueBatchCreate: issuesResult.issueBatchCreate
-    };
   }
 
   // Update a single issue
@@ -336,9 +366,9 @@ export class LinearGraphQLClient {
   }
 
   // Delete multiple issues
-  async deleteIssues(ids: string[]): Promise<DeleteIssueResponse> {
+  async deleteIssues(ids: string[]): Promise<DeleteIssuesResponse> {
     const { DELETE_ISSUES_MUTATION } = await import('./mutations.js');
-    return this.executeData<DeleteIssueResponse>(DELETE_ISSUES_MUTATION, { ids });
+    return this.executeData<DeleteIssuesResponse>(DELETE_ISSUES_MUTATION, { ids });
   }
 
   async getComment({ id }: GetCommentInput): Promise<GetCommentResponse> {
@@ -590,5 +620,63 @@ export class LinearGraphQLClient {
     return firstMessage
       ? `GraphQL operation ${operationName} failed: ${firstMessage}`
       : `GraphQL operation ${operationName} failed`;
+  }
+
+  private async compensateProjectIssueFailure(
+    project: ProjectResponse['projectCreate']['project'],
+    projectResult: ProjectResponse,
+    issuesResult?: IssueBatchResponse,
+    issueError?: unknown
+  ): Promise<ProjectWithIssuesOutcome> {
+    const projectId = project?.id;
+    const projectDeleteResult = projectId
+      ? await this.tryDeleteProject(projectId)
+      : { success: false, error: 'Project identifier was not available for compensation.' };
+
+    const baseMessage = issueError instanceof Error
+      ? issueError.message
+      : 'Issue creation did not complete successfully.';
+    const issues = issuesResult?.issueBatchCreate.issues ?? [];
+
+    return {
+      success: false,
+      failedStep: 'issueBatchCreate',
+      message: projectDeleteResult.success
+        ? `Issue creation failed after project creation. The created project was deleted during compensation. ${baseMessage}`
+        : `Issue creation failed after project creation and compensation did not remove the created project. ${baseMessage}`,
+      issueCreationAttempted: true,
+      compensationAttempted: true,
+      compensationSucceeded: projectDeleteResult.success,
+      project,
+      issues,
+      lastSyncId: issuesResult?.issueBatchCreate.lastSyncId ?? projectResult.projectCreate.lastSyncId,
+      projectCreate: projectResult.projectCreate,
+      issueBatchCreate: issuesResult?.issueBatchCreate,
+    };
+  }
+
+  private async tryDeleteProject(
+    projectId: string
+  ): Promise<{ success: true } | { success: false; error: string }> {
+    try {
+      const payload = await this.executeSdk(
+        'deleteProject',
+        () => this.linearClient.deleteProject(projectId)
+      );
+
+      if (getBoolean(payload, 'success') ?? true) {
+        return { success: true };
+      }
+
+      return {
+        success: false,
+        error: 'Project deletion returned success false during compensation.',
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown compensation error',
+      };
+    }
   }
 }

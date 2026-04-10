@@ -4,26 +4,83 @@ export interface GetAgentSessionInput {
   id: string;
 }
 
-export type ListAgentSessionsInput = Pick<
-  NonNullable<Parameters<LinearClient['agentSessions']>[0]>,
-  'first' | 'after' | 'orderBy'
->;
+export const AGENT_FLEXIBLE_OBJECT_MAX_PROPERTIES = 20;
+export const AGENT_FLEXIBLE_ARRAY_MAX_ITEMS = 50;
+export const AGENT_FLEXIBLE_STRING_MAX_LENGTH = 4000;
+export const AGENT_FLEXIBLE_MAX_DEPTH = 5;
 
-export type CreateAgentSessionOnIssueInput = Parameters<LinearClient['agentSessionCreateOnIssue']>[0];
+export type AgentFlexibleValue =
+  | string
+  | number
+  | boolean
+  | null
+  | AgentFlexibleObject
+  | AgentFlexibleValue[];
 
-export type CreateAgentSessionOnCommentInput = Parameters<LinearClient['agentSessionCreateOnComment']>[0];
+export interface AgentFlexibleObject {
+  [key: string]: AgentFlexibleValue;
+}
 
-export type UpdateAgentSessionInput = {
+type AgentSessionListArgs = NonNullable<Parameters<LinearClient['agentSessions']>[0]>;
+type AgentActivityListArgs = NonNullable<Parameters<LinearClient['agentActivities']>[0]>;
+type AgentActivityCreateSdkInput = Parameters<LinearClient['createAgentActivity']>[0];
+
+export interface ListAgentSessionsInput {
+  first?: AgentSessionListArgs['first'];
+  after?: AgentSessionListArgs['after'];
+  orderBy?: AgentSessionListArgs['orderBy'];
+}
+
+export interface AgentSessionExternalUrlInput {
+  label: string;
+  url: string;
+}
+
+export interface CreateAgentSessionOnIssueInput {
+  issueId: string;
+  externalLink?: string;
+  externalUrls?: AgentSessionExternalUrlInput[];
+}
+
+export interface CreateAgentSessionOnCommentInput {
+  commentId: string;
+  externalLink?: string;
+  externalUrls?: AgentSessionExternalUrlInput[];
+}
+
+export interface AgentSessionUserStateInput {
+  userId: string;
+  lastReadAt?: string;
+}
+
+export interface UpdateAgentSessionInput {
   id: string;
-} & Parameters<LinearClient['updateAgentSession']>[1];
+  addedExternalUrls?: AgentSessionExternalUrlInput[];
+  dismissedAt?: string;
+  externalLink?: string;
+  externalUrls?: AgentSessionExternalUrlInput[];
+  plan?: AgentFlexibleObject;
+  removedExternalUrls?: string[];
+  userState?: AgentSessionUserStateInput[];
+}
 
 export interface GetAgentActivityInput {
   id: string;
 }
 
-export type ListAgentActivitiesInput = Pick<
-  NonNullable<Parameters<LinearClient['agentActivities']>[0]>,
-  'filter' | 'first' | 'after' | 'orderBy'
->;
+export interface ListAgentActivitiesInput {
+  filter?: AgentActivityListArgs['filter'];
+  first?: AgentActivityListArgs['first'];
+  after?: AgentActivityListArgs['after'];
+  orderBy?: AgentActivityListArgs['orderBy'];
+}
 
-export type CreateAgentActivityInput = Parameters<LinearClient['createAgentActivity']>[0];
+export interface CreateAgentActivityInput {
+  agentSessionId: string;
+  content: AgentFlexibleObject;
+  contextualMetadata?: AgentFlexibleObject;
+  ephemeral?: AgentActivityCreateSdkInput['ephemeral'];
+  id?: string;
+  signal?: AgentActivityCreateSdkInput['signal'];
+  signalMetadata?: AgentFlexibleObject;
+}

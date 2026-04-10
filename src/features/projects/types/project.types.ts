@@ -1,4 +1,5 @@
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
+import { CreateIssueInput, Issue, IssueBatchResponse } from '../../issues/types/issue.types.js';
 
 export interface ProjectInput {
   name: string;
@@ -95,6 +96,34 @@ export interface ProjectResponse {
   };
 }
 
+export interface ProjectWithIssuesInput {
+  project: ProjectInput;
+  issues: CreateIssueInput[];
+}
+
+export type ProjectWithIssuesOutcome =
+  | {
+      success: true;
+      project: Project;
+      issues: Issue[];
+      lastSyncId?: number;
+      projectCreate: ProjectResponse['projectCreate'];
+      issueBatchCreate?: IssueBatchResponse['issueBatchCreate'];
+    }
+  | {
+      success: false;
+      failedStep: 'projectCreate' | 'issueBatchCreate';
+      message: string;
+      issueCreationAttempted: boolean;
+      compensationAttempted: boolean;
+      compensationSucceeded?: boolean;
+      project?: Project;
+      issues?: Issue[];
+      lastSyncId?: number;
+      projectCreate: ProjectResponse['projectCreate'];
+      issueBatchCreate?: IssueBatchResponse['issueBatchCreate'];
+    };
+
 export interface SearchProjectsResponse {
   projects: {
     nodes: Project[];
@@ -109,10 +138,7 @@ export interface ProjectHandlerMethods {
   handleCreateProject(args: ProjectInput): Promise<BaseToolResponse>;
   handleUpdateProject(args: UpdateProjectInput & { id: string }): Promise<BaseToolResponse>;
   handleDeleteProject(args: { id: string }): Promise<BaseToolResponse>;
-  handleCreateProjectWithIssues(args: {
-    project: ProjectInput;
-    issues: Array<Record<string, unknown>>;
-  }): Promise<BaseToolResponse>;
+  handleCreateProjectWithIssues(args: ProjectWithIssuesInput): Promise<BaseToolResponse>;
   handleGetProject(args: { id: string }): Promise<BaseToolResponse>;
   handleListProjects(args: ListProjectsInput): Promise<BaseToolResponse>;
   handleSearchProjects(args: SearchProjectsInput): Promise<BaseToolResponse>;

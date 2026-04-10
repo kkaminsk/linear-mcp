@@ -19,43 +19,14 @@ import { SubscriptionHandler } from '../../features/subscriptions/handlers/subsc
  * Ensures consistent initialization and dependency injection across handlers.
  */
 export class HandlerFactory {
-  private authHandler: AuthHandler;
-  private issueHandler: IssueHandler;
-  private projectHandler: ProjectHandler;
-  private teamHandler: TeamHandler;
-  private userHandler: UserHandler;
-  private commentHandler: CommentHandler;
-  private milestoneHandler: MilestoneHandler;
-  private cycleHandler: CycleHandler;
-  private attachmentHandler: AttachmentHandler;
-  private webhookHandler: WebhookHandler;
-  private portfolioHandler: PortfolioHandler;
-  private agentHandler: AgentHandler;
-  private subscriptionHandler: SubscriptionHandler;
-
   constructor(
-    auth: LinearAuth,
-    runtimeCapabilities: RuntimeCapabilities = getRuntimeCapabilities()
-  ) {
-    this.authHandler = new AuthHandler(auth);
-    this.issueHandler = new IssueHandler(auth);
-    this.projectHandler = new ProjectHandler(auth);
-    this.teamHandler = new TeamHandler(auth);
-    this.userHandler = new UserHandler(auth);
-    this.commentHandler = new CommentHandler(auth);
-    this.milestoneHandler = new MilestoneHandler(auth);
-    this.cycleHandler = new CycleHandler(auth);
-    this.attachmentHandler = new AttachmentHandler(auth);
-    this.webhookHandler = new WebhookHandler(auth);
-    this.portfolioHandler = new PortfolioHandler(auth);
-    this.agentHandler = new AgentHandler(auth);
-    this.subscriptionHandler = new SubscriptionHandler(auth, runtimeCapabilities);
-  }
+    private readonly runtimeCapabilities: RuntimeCapabilities = getRuntimeCapabilities()
+  ) {}
 
   /**
    * Gets the appropriate handler for a given tool name.
    */
-  getHandlerForTool(toolName: string): {
+  getHandlerForTool(toolName: string, auth: LinearAuth): {
     handler:
       | AuthHandler
       | IssueHandler
@@ -73,110 +44,126 @@ export class HandlerFactory {
     method: string;
   } {
     // Map tool names to their handlers and methods
-    const handlerMap: Record<string, { handler: any; method: string }> = {
+    const handlerMap: Record<string, {
+      handler:
+        | AuthHandler
+        | IssueHandler
+        | ProjectHandler
+        | TeamHandler
+        | UserHandler
+        | CommentHandler
+        | MilestoneHandler
+        | CycleHandler
+        | AttachmentHandler
+        | WebhookHandler
+        | PortfolioHandler
+        | AgentHandler
+        | SubscriptionHandler;
+      method: string;
+    }> = {
       // Auth tools
-      linear_auth: { handler: this.authHandler, method: 'handleAuth' },
-      linear_auth_callback: { handler: this.authHandler, method: 'handleAuthCallback' },
+      linear_auth: { handler: new AuthHandler(auth), method: 'handleAuth' },
+      linear_auth_callback: { handler: new AuthHandler(auth), method: 'handleAuthCallback' },
 
       // Issue tools
-      linear_get_issue: { handler: this.issueHandler, method: 'handleGetIssue' },
-      linear_create_issue: { handler: this.issueHandler, method: 'handleCreateIssue' },
-      linear_create_issues: { handler: this.issueHandler, method: 'handleCreateIssues' },
-      linear_bulk_update_issues: { handler: this.issueHandler, method: 'handleBulkUpdateIssues' },
-      linear_list_issues: { handler: this.issueHandler, method: 'handleListIssues' },
-      linear_search_issues: { handler: this.issueHandler, method: 'handleSearchIssues' },
-      linear_create_issue_relation: { handler: this.issueHandler, method: 'handleCreateIssueRelation' },
-      linear_delete_issue_relation: { handler: this.issueHandler, method: 'handleDeleteIssueRelation' },
-      linear_delete_issue: { handler: this.issueHandler, method: 'handleDeleteIssue' },
-      linear_delete_issues: { handler: this.issueHandler, method: 'handleDeleteIssues' },
+      linear_get_issue: { handler: new IssueHandler(auth), method: 'handleGetIssue' },
+      linear_create_issue: { handler: new IssueHandler(auth), method: 'handleCreateIssue' },
+      linear_create_issues: { handler: new IssueHandler(auth), method: 'handleCreateIssues' },
+      linear_bulk_update_issues: { handler: new IssueHandler(auth), method: 'handleBulkUpdateIssues' },
+      linear_list_issues: { handler: new IssueHandler(auth), method: 'handleListIssues' },
+      linear_search_issues: { handler: new IssueHandler(auth), method: 'handleSearchIssues' },
+      linear_create_issue_relation: { handler: new IssueHandler(auth), method: 'handleCreateIssueRelation' },
+      linear_delete_issue_relation: { handler: new IssueHandler(auth), method: 'handleDeleteIssueRelation' },
+      linear_delete_issue: { handler: new IssueHandler(auth), method: 'handleDeleteIssue' },
+      linear_delete_issues: { handler: new IssueHandler(auth), method: 'handleDeleteIssues' },
 
       // Project tools
-      linear_create_project: { handler: this.projectHandler, method: 'handleCreateProject' },
-      linear_update_project: { handler: this.projectHandler, method: 'handleUpdateProject' },
-      linear_delete_project: { handler: this.projectHandler, method: 'handleDeleteProject' },
-      linear_create_project_with_issues: { handler: this.projectHandler, method: 'handleCreateProjectWithIssues' },
-      linear_get_project: { handler: this.projectHandler, method: 'handleGetProject' },
-      linear_list_projects: { handler: this.projectHandler, method: 'handleListProjects' },
-      linear_search_projects: { handler: this.projectHandler, method: 'handleSearchProjects' },
-      linear_create_project_update: { handler: this.projectHandler, method: 'handleCreateProjectUpdate' },
-      linear_update_project_update: { handler: this.projectHandler, method: 'handleUpdateProjectUpdate' },
+      linear_create_project: { handler: new ProjectHandler(auth), method: 'handleCreateProject' },
+      linear_update_project: { handler: new ProjectHandler(auth), method: 'handleUpdateProject' },
+      linear_delete_project: { handler: new ProjectHandler(auth), method: 'handleDeleteProject' },
+      linear_create_project_with_issues: { handler: new ProjectHandler(auth), method: 'handleCreateProjectWithIssues' },
+      linear_get_project: { handler: new ProjectHandler(auth), method: 'handleGetProject' },
+      linear_list_projects: { handler: new ProjectHandler(auth), method: 'handleListProjects' },
+      linear_search_projects: { handler: new ProjectHandler(auth), method: 'handleSearchProjects' },
+      linear_create_project_update: { handler: new ProjectHandler(auth), method: 'handleCreateProjectUpdate' },
+      linear_update_project_update: { handler: new ProjectHandler(auth), method: 'handleUpdateProjectUpdate' },
 
       // Team tools
-      linear_get_team: { handler: this.teamHandler, method: 'handleGetTeam' },
-      linear_get_teams: { handler: this.teamHandler, method: 'handleGetTeams' },
-      linear_list_teams: { handler: this.teamHandler, method: 'handleListTeams' },
-      linear_list_workflow_states: { handler: this.teamHandler, method: 'handleListWorkflowStates' },
-      linear_list_labels: { handler: this.teamHandler, method: 'handleListLabels' },
-      linear_create_label: { handler: this.teamHandler, method: 'handleCreateLabel' },
-      linear_update_label: { handler: this.teamHandler, method: 'handleUpdateLabel' },
-      linear_delete_label: { handler: this.teamHandler, method: 'handleDeleteLabel' },
+      linear_get_team: { handler: new TeamHandler(auth), method: 'handleGetTeam' },
+      linear_get_teams: { handler: new TeamHandler(auth), method: 'handleGetTeams' },
+      linear_list_teams: { handler: new TeamHandler(auth), method: 'handleListTeams' },
+      linear_list_workflow_states: { handler: new TeamHandler(auth), method: 'handleListWorkflowStates' },
+      linear_list_labels: { handler: new TeamHandler(auth), method: 'handleListLabels' },
+      linear_create_label: { handler: new TeamHandler(auth), method: 'handleCreateLabel' },
+      linear_update_label: { handler: new TeamHandler(auth), method: 'handleUpdateLabel' },
+      linear_delete_label: { handler: new TeamHandler(auth), method: 'handleDeleteLabel' },
 
       // User tools
-      linear_get_user: { handler: this.userHandler, method: 'handleGetUser' },
-      linear_list_users: { handler: this.userHandler, method: 'handleListUsers' },
-      linear_search_users: { handler: this.userHandler, method: 'handleSearchUsers' },
+      linear_get_user: { handler: new UserHandler(auth), method: 'handleGetUser' },
+      linear_list_users: { handler: new UserHandler(auth), method: 'handleListUsers' },
+      linear_search_users: { handler: new UserHandler(auth), method: 'handleSearchUsers' },
 
       // Cycle tools
-      linear_get_cycle: { handler: this.cycleHandler, method: 'handleGetCycle' },
-      linear_list_cycles: { handler: this.cycleHandler, method: 'handleListCycles' },
-      linear_get_current_cycle: { handler: this.cycleHandler, method: 'handleGetCurrentCycle' },
+      linear_get_cycle: { handler: new CycleHandler(auth), method: 'handleGetCycle' },
+      linear_list_cycles: { handler: new CycleHandler(auth), method: 'handleListCycles' },
+      linear_get_current_cycle: { handler: new CycleHandler(auth), method: 'handleGetCurrentCycle' },
 
       // Attachment tools
-      linear_get_attachment: { handler: this.attachmentHandler, method: 'handleGetAttachment' },
-      linear_list_attachments: { handler: this.attachmentHandler, method: 'handleListAttachments' },
-      linear_create_attachment: { handler: this.attachmentHandler, method: 'handleCreateAttachment' },
-      linear_update_attachment: { handler: this.attachmentHandler, method: 'handleUpdateAttachment' },
-      linear_delete_attachment: { handler: this.attachmentHandler, method: 'handleDeleteAttachment' },
+      linear_get_attachment: { handler: new AttachmentHandler(auth), method: 'handleGetAttachment' },
+      linear_list_attachments: { handler: new AttachmentHandler(auth), method: 'handleListAttachments' },
+      linear_create_attachment: { handler: new AttachmentHandler(auth), method: 'handleCreateAttachment' },
+      linear_update_attachment: { handler: new AttachmentHandler(auth), method: 'handleUpdateAttachment' },
+      linear_delete_attachment: { handler: new AttachmentHandler(auth), method: 'handleDeleteAttachment' },
 
       // Webhook tools
-      linear_get_webhook: { handler: this.webhookHandler, method: 'handleGetWebhook' },
-      linear_list_webhooks: { handler: this.webhookHandler, method: 'handleListWebhooks' },
-      linear_create_webhook: { handler: this.webhookHandler, method: 'handleCreateWebhook' },
-      linear_delete_webhook: { handler: this.webhookHandler, method: 'handleDeleteWebhook' },
+      linear_get_webhook: { handler: new WebhookHandler(auth), method: 'handleGetWebhook' },
+      linear_list_webhooks: { handler: new WebhookHandler(auth), method: 'handleListWebhooks' },
+      linear_create_webhook: { handler: new WebhookHandler(auth), method: 'handleCreateWebhook' },
+      linear_delete_webhook: { handler: new WebhookHandler(auth), method: 'handleDeleteWebhook' },
 
       // Portfolio tools
-      linear_get_initiative: { handler: this.portfolioHandler, method: 'handleGetInitiative' },
-      linear_list_initiatives: { handler: this.portfolioHandler, method: 'handleListInitiatives' },
-      linear_create_initiative: { handler: this.portfolioHandler, method: 'handleCreateInitiative' },
-      linear_update_initiative: { handler: this.portfolioHandler, method: 'handleUpdateInitiative' },
-      linear_get_customer: { handler: this.portfolioHandler, method: 'handleGetCustomer' },
-      linear_list_customers: { handler: this.portfolioHandler, method: 'handleListCustomers' },
-      linear_create_customer: { handler: this.portfolioHandler, method: 'handleCreateCustomer' },
-      linear_update_customer: { handler: this.portfolioHandler, method: 'handleUpdateCustomer' },
+      linear_get_initiative: { handler: new PortfolioHandler(auth), method: 'handleGetInitiative' },
+      linear_list_initiatives: { handler: new PortfolioHandler(auth), method: 'handleListInitiatives' },
+      linear_create_initiative: { handler: new PortfolioHandler(auth), method: 'handleCreateInitiative' },
+      linear_update_initiative: { handler: new PortfolioHandler(auth), method: 'handleUpdateInitiative' },
+      linear_get_customer: { handler: new PortfolioHandler(auth), method: 'handleGetCustomer' },
+      linear_list_customers: { handler: new PortfolioHandler(auth), method: 'handleListCustomers' },
+      linear_create_customer: { handler: new PortfolioHandler(auth), method: 'handleCreateCustomer' },
+      linear_update_customer: { handler: new PortfolioHandler(auth), method: 'handleUpdateCustomer' },
 
       // Agent tools
-      linear_get_agent_session: { handler: this.agentHandler, method: 'handleGetAgentSession' },
-      linear_list_agent_sessions: { handler: this.agentHandler, method: 'handleListAgentSessions' },
-      linear_create_agent_session_on_issue: { handler: this.agentHandler, method: 'handleCreateAgentSessionOnIssue' },
-      linear_create_agent_session_on_comment: { handler: this.agentHandler, method: 'handleCreateAgentSessionOnComment' },
-      linear_update_agent_session: { handler: this.agentHandler, method: 'handleUpdateAgentSession' },
-      linear_get_agent_activity: { handler: this.agentHandler, method: 'handleGetAgentActivity' },
-      linear_list_agent_activities: { handler: this.agentHandler, method: 'handleListAgentActivities' },
-      linear_create_agent_activity: { handler: this.agentHandler, method: 'handleCreateAgentActivity' },
+      linear_get_agent_session: { handler: new AgentHandler(auth), method: 'handleGetAgentSession' },
+      linear_list_agent_sessions: { handler: new AgentHandler(auth), method: 'handleListAgentSessions' },
+      linear_create_agent_session_on_issue: { handler: new AgentHandler(auth), method: 'handleCreateAgentSessionOnIssue' },
+      linear_create_agent_session_on_comment: { handler: new AgentHandler(auth), method: 'handleCreateAgentSessionOnComment' },
+      linear_update_agent_session: { handler: new AgentHandler(auth), method: 'handleUpdateAgentSession' },
+      linear_get_agent_activity: { handler: new AgentHandler(auth), method: 'handleGetAgentActivity' },
+      linear_list_agent_activities: { handler: new AgentHandler(auth), method: 'handleListAgentActivities' },
+      linear_create_agent_activity: { handler: new AgentHandler(auth), method: 'handleCreateAgentActivity' },
 
       // Capability and subscription tools
-      linear_get_capabilities: { handler: this.subscriptionHandler, method: 'handleGetCapabilities' },
-      linear_start_subscription: { handler: this.subscriptionHandler, method: 'handleStartSubscription' },
-      linear_stop_subscription: { handler: this.subscriptionHandler, method: 'handleStopSubscription' },
+      linear_get_capabilities: { handler: new SubscriptionHandler(auth, this.runtimeCapabilities), method: 'handleGetCapabilities' },
+      linear_start_subscription: { handler: new SubscriptionHandler(auth, this.runtimeCapabilities), method: 'handleStartSubscription' },
+      linear_stop_subscription: { handler: new SubscriptionHandler(auth, this.runtimeCapabilities), method: 'handleStopSubscription' },
 
       // Comment tools
-      linear_get_comment: { handler: this.commentHandler, method: 'handleGetComment' },
-      linear_list_comments: { handler: this.commentHandler, method: 'handleListComments' },
-      linear_get_issue_comments: { handler: this.commentHandler, method: 'handleGetIssueComments' },
-      linear_create_comment: { handler: this.commentHandler, method: 'handleCreateComment' },
-      linear_update_comment: { handler: this.commentHandler, method: 'handleUpdateComment' },
-      linear_delete_comment: { handler: this.commentHandler, method: 'handleDeleteComment' },
-      linear_resolve_comment: { handler: this.commentHandler, method: 'handleResolveComment' },
-      linear_unresolve_comment: { handler: this.commentHandler, method: 'handleUnresolveComment' },
+      linear_get_comment: { handler: new CommentHandler(auth), method: 'handleGetComment' },
+      linear_list_comments: { handler: new CommentHandler(auth), method: 'handleListComments' },
+      linear_get_issue_comments: { handler: new CommentHandler(auth), method: 'handleGetIssueComments' },
+      linear_create_comment: { handler: new CommentHandler(auth), method: 'handleCreateComment' },
+      linear_update_comment: { handler: new CommentHandler(auth), method: 'handleUpdateComment' },
+      linear_delete_comment: { handler: new CommentHandler(auth), method: 'handleDeleteComment' },
+      linear_resolve_comment: { handler: new CommentHandler(auth), method: 'handleResolveComment' },
+      linear_unresolve_comment: { handler: new CommentHandler(auth), method: 'handleUnresolveComment' },
 
       // Milestone tools
-      linear_create_project_milestone: { handler: this.milestoneHandler, method: 'handleCreateProjectMilestone' },
-      linear_update_project_milestone: { handler: this.milestoneHandler, method: 'handleUpdateProjectMilestone' },
-      linear_delete_project_milestone: { handler: this.milestoneHandler, method: 'handleDeleteProjectMilestone' },
-      linear_get_project_milestone: { handler: this.milestoneHandler, method: 'handleGetProjectMilestone' },
-      linear_search_project_milestones: { handler: this.milestoneHandler, method: 'handleSearchProjectMilestones' },
-      linear_get_project_milestones: { handler: this.milestoneHandler, method: 'handleGetProjectMilestones' },
-      linear_create_project_milestones: { handler: this.milestoneHandler, method: 'handleCreateProjectMilestones' },
+      linear_create_project_milestone: { handler: new MilestoneHandler(auth), method: 'handleCreateProjectMilestone' },
+      linear_update_project_milestone: { handler: new MilestoneHandler(auth), method: 'handleUpdateProjectMilestone' },
+      linear_delete_project_milestone: { handler: new MilestoneHandler(auth), method: 'handleDeleteProjectMilestone' },
+      linear_get_project_milestone: { handler: new MilestoneHandler(auth), method: 'handleGetProjectMilestone' },
+      linear_search_project_milestones: { handler: new MilestoneHandler(auth), method: 'handleSearchProjectMilestones' },
+      linear_get_project_milestones: { handler: new MilestoneHandler(auth), method: 'handleGetProjectMilestones' },
+      linear_create_project_milestones: { handler: new MilestoneHandler(auth), method: 'handleCreateProjectMilestones' },
     };
 
     const handlerInfo = handlerMap[toolName];

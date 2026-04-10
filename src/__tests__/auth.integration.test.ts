@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
-import { LinearAuth } from '../auth';
 import { LinearClient } from '@linear/sdk';
+import { LinearAuth } from '../auth.js';
 
 // Skip tests if no credentials are configured
-const hasAPIKeyCredentials = process.env.LINEAR_API_KEY;
+const apiKeyCredential = process.env.LINEAR_API_KEY ?? process.env.LINEAR_ACCESS_TOKEN;
+const hasAPIKeyCredentials = Boolean(apiKeyCredential);
 const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID && 
                           process.env.LINEAR_CLIENT_SECRET && 
                           process.env.LINEAR_REDIRECT_URI;
@@ -19,7 +20,7 @@ const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID &&
       auth = new LinearAuth();
       auth.initialize({
         type: 'api',
-        apiKey: process.env.LINEAR_API_KEY!
+        apiKey: apiKeyCredential!
       });
     });
 

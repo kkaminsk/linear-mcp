@@ -14,6 +14,7 @@ type MockIssueSdk = {
   createIssue: jest.MockedFunction<(args: CreateIssueInput) => Promise<unknown>>;
   createIssueBatch: jest.MockedFunction<(args: CreateIssuesInput) => Promise<unknown>>;
   updateIssue: jest.MockedFunction<(id: string, input: UpdateIssueInput) => Promise<unknown>>;
+  deleteIssue: jest.MockedFunction<(id: string) => Promise<unknown>>;
 };
 
 type MockIssueClient = {
@@ -32,6 +33,7 @@ describe('IssueHandler', () => {
       createIssue: jest.fn<(args: CreateIssueInput) => Promise<unknown>>(),
       createIssueBatch: jest.fn<(args: CreateIssuesInput) => Promise<unknown>>(),
       updateIssue: jest.fn<(id: string, input: UpdateIssueInput) => Promise<unknown>>(),
+      deleteIssue: jest.fn<(id: string) => Promise<unknown>>(),
     };
 
     mockClient = {
@@ -276,6 +278,23 @@ describe('IssueHandler', () => {
     });
   });
 
+  it('rejects conflicting stateId and states filters before search execution', async () => {
+    const result = await handler.handleSearchIssues({
+      query: 'Search hit',
+      stateId: 'state-1',
+      states: ['Todo'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockClient.searchIssues).not.toHaveBeenCalled();
+    expect(result.structuredContent).toMatchObject({
+      error: {
+        type: 'mcp',
+        message: 'MCP error -32602: stateId and states cannot both be provided in the same issue query.',
+      },
+    });
+  });
+
   it('returns results for a query-only issue search', async () => {
     mockClient.searchIssues.mockResolvedValueOnce({
       issues: {
@@ -393,6 +412,32 @@ describe('IssueHandler', () => {
           },
         },
       ],
+    });
+  });
+
+  it('returns deterministic partial results when bulk issue deletion is only partially successful', async () => {
+    mockClient.sdk.deleteIssue
+      .mockResolvedValueOnce({ success: true })
+      .mockRejectedValueOnce(new Error('Delete failed'));
+
+    const result = await handler.handleDeleteIssues({
+      ids: ['issue-1', 'issue-2'],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      success: false,
+      deletedIds: ['issue-1'],
+      failedIds: ['issue-2'],
+      failed: [
+        {
+          id: 'issue-2',
+          message: 'Delete failed',
+        },
+      ],
+      error: {
+        type: 'partial',
+      },
     });
   });
 });

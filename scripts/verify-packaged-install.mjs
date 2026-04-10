@@ -38,6 +38,20 @@ const [{ filename }] = JSON.parse(packOutput);
 const tarballPath = join(repoRoot, filename);
 const tempDir = mkdtempSync(join(tmpdir(), 'linear-mcp-package-'));
 
+async function listToolsWithAuthEnv(installedBuild, authEnv = {}) {
+  return await listToolsFromStdio({
+    command: process.execPath,
+    args: [installedBuild],
+    cwd: tempDir,
+    env: buildProcessEnv({
+      LINEAR_MCP_TRANSPORT: 'stdio',
+      LINEAR_API_KEY: undefined,
+      LINEAR_ACCESS_TOKEN: undefined,
+      ...authEnv,
+    }),
+  });
+}
+
 try {
   runNpm(['init', '-y'], {
     cwd: tempDir,
@@ -54,13 +68,12 @@ try {
   const installedBuild = join(tempDir, 'node_modules', packageJson.name, 'build', 'index.js');
   assert(existsSync(installedBuild), 'Fresh package install is missing build/index.js.');
 
-  const { tools, stderr } = await listToolsFromStdio({
-    command: process.execPath,
-    args: [installedBuild],
-    cwd: tempDir,
-    env: buildProcessEnv({
-      LINEAR_MCP_TRANSPORT: 'stdio',
-    }),
+  const { tools, stderr } = await listToolsWithAuthEnv(installedBuild);
+  const { stderr: apiKeyStderr } = await listToolsWithAuthEnv(installedBuild, {
+    LINEAR_API_KEY: 'packaged-api-key',
+  });
+  const { stderr: accessTokenStderr } = await listToolsWithAuthEnv(installedBuild, {
+    LINEAR_ACCESS_TOKEN: 'packaged-access-token',
   });
   const { result: capabilitiesResult } = await callToolFromStdio({
     command: process.execPath,
@@ -68,18 +81,28 @@ try {
     cwd: tempDir,
     env: buildProcessEnv({
       LINEAR_MCP_TRANSPORT: 'stdio',
+      LINEAR_API_KEY: undefined,
+      LINEAR_ACCESS_TOKEN: undefined,
     }),
     name: 'linear_get_capabilities',
   });
 
   assert(tools.length > 0, 'Fresh package install did not return any tools.');
   assert(
-    stderr.includes('Auth:'),
-    'Packaged startup must emit auth/setup diagnostics separately from install failures.'
+    stderr.includes('Auth: no LINEAR_API_KEY or LINEAR_ACCESS_TOKEN detected.'),
+    'Packaged startup must explain how to configure API-key auth when neither env variable is set.'
   );
   assert(
     stderr.includes(`Build: ${packageJson.name}@${packageJson.version}`),
     'Packaged startup must emit package-derived build provenance diagnostics.'
+  );
+  assert(
+    apiKeyStderr.includes('Auth: LINEAR_API_KEY detected.'),
+    'Packaged startup must accept LINEAR_API_KEY for API-key auth.'
+  );
+  assert(
+    accessTokenStderr.includes('Auth: LINEAR_ACCESS_TOKEN detected.'),
+    'Packaged startup must accept LINEAR_ACCESS_TOKEN for API-key auth.'
   );
   assert(
     capabilitiesResult.structuredContent?.server?.name === packageJson.name

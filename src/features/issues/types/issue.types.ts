@@ -143,6 +143,12 @@ export interface DeleteIssueResponse {
   };
 }
 
+export interface DeleteIssuesResponse {
+  issueDelete: {
+    success: boolean;
+  };
+}
+
 export interface IssueBatchResponse {
   issueBatchCreate: {
     success: boolean;

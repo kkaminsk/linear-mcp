@@ -14,6 +14,7 @@ import {
   toPageInfo,
 } from '../../../types/sdk.utils.js';
 import {
+  ProjectWithIssuesInput,
   ListProjectsInput,
   ProjectHandlerMethods,
   ProjectInput,
@@ -101,10 +102,7 @@ export class ProjectHandler extends BaseHandler implements ProjectHandlerMethods
     }
   }
 
-  async handleCreateProjectWithIssues(args: {
-    project: ProjectInput;
-    issues: Array<Record<string, unknown>>;
-  }): Promise<BaseToolResponse> {
+  async handleCreateProjectWithIssues(args: ProjectWithIssuesInput): Promise<BaseToolResponse> {
     try {
       const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['project', 'issues']);
@@ -117,36 +115,47 @@ export class ProjectHandler extends BaseHandler implements ProjectHandlerMethods
         throw new Error('issues must be an array');
       }
 
-      const projectPayload = await client.executeSdk(
-        'createProject',
-        () => client.sdk.createProject(args.project)
-      );
-      const project = await resolveValue(asRecord(projectPayload).project as Promise<unknown> | unknown);
-      const projectId = getString(project, 'id');
+      const workflow = await client.createProjectWithIssues(args.project, args.issues);
 
-      const issuesToCreate = args.issues.map(issue => ({
-        ...issue,
-        projectId,
-      }));
+      if (!workflow.success) {
+        const mappedProject = workflow.project
+          ? await this.mapProjectDetail(workflow.project)
+          : undefined;
+        const mappedIssues = await Promise.all((workflow.issues ?? []).map(issue => this.mapIssueReference(issue)));
 
-      const issuePayload = issuesToCreate.length > 0
-        ? await client.executeSdk(
-            'createIssueBatch',
-            () => client.sdk.createIssueBatch({ issues: issuesToCreate as never[] })
-          )
-        : undefined;
-
-      const createdIssues = issuePayload && Array.isArray(asRecord(issuePayload).issues)
-        ? asRecord(issuePayload).issues as unknown[]
-        : [];
+        return this.createErrorResponse(
+          workflow.message,
+          compactObject({
+            success: false,
+            project: mappedProject,
+            issues: mappedIssues,
+            lastSyncId: workflow.lastSyncId,
+            partialState: workflow.issueCreationAttempted && workflow.compensationSucceeded === false && workflow.project
+              ? compactObject({
+                  projectId: getString(workflow.project, 'id'),
+                  projectName: getString(workflow.project, 'name'),
+                  failedStep: workflow.failedStep,
+                })
+              : undefined,
+            error: {
+              type: 'workflow',
+              failedStep: workflow.failedStep,
+              issueCreationAttempted: workflow.issueCreationAttempted,
+              compensationAttempted: workflow.compensationAttempted,
+              compensationSucceeded: workflow.compensationSucceeded,
+              message: workflow.message,
+            },
+          })
+        );
+      }
 
       return this.createStructuredResponse(
-        `Created project ${getString(project, 'name') ?? args.project.name}${createdIssues.length > 0 ? ` with ${createdIssues.length} issues` : ''}`,
+        `Created project ${getString(workflow.project, 'name') ?? args.project.name}${workflow.issues.length > 0 ? ` with ${workflow.issues.length} issues` : ''}`,
         {
-          success: (getBoolean(projectPayload, 'success') ?? true) && (issuePayload ? (getBoolean(issuePayload, 'success') ?? true) : true),
-          project: await this.mapProjectDetail(project),
-          issues: await Promise.all(createdIssues.map(issue => this.mapIssueReference(issue))),
-          lastSyncId: issuePayload ? getNumber(issuePayload, 'lastSyncId') : getNumber(projectPayload, 'lastSyncId'),
+          success: true,
+          project: await this.mapProjectDetail(workflow.project),
+          issues: await Promise.all(workflow.issues.map(issue => this.mapIssueReference(issue))),
+          lastSyncId: workflow.lastSyncId,
         }
       );
     } catch (error) {

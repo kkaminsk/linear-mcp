@@ -1,6 +1,7 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { LinearAuth } from '../../auth.js';
 import {
+  GraphQLErrorDetail,
   GraphQLResult,
   LinearGraphQLClient,
   LinearGraphQLRequestError,
@@ -214,12 +215,13 @@ export abstract class BaseHandler {
   private serializeGraphQLResult(
     result: GraphQLResult<unknown>
   ): Record<string, unknown> | undefined {
-    const hasHeaders = Object.keys(result.meta.headers).length > 0;
-    const hasErrors = (result.errors?.length ?? 0) > 0;
-    const hasExtensions = result.extensions && Object.keys(result.extensions).length > 0;
+    const sanitizedErrors = this.sanitizeGraphQLErrors(result.errors);
+    const requestId = this.getGraphQLRequestId(result);
+    const hasErrors = (sanitizedErrors?.length ?? 0) > 0;
     const hasStatus = typeof result.meta.status === 'number';
+    const hasRequestId = typeof requestId === 'string' && requestId.length > 0;
 
-    if (!hasHeaders && !hasErrors && !hasExtensions && !hasStatus && !result.meta.retryable) {
+    if (!hasErrors && !hasStatus && !hasRequestId && !result.meta.retryable) {
       return undefined;
     }
 
@@ -231,18 +233,78 @@ export abstract class BaseHandler {
       graphql.status = result.meta.status;
     }
 
-    if (hasHeaders) {
-      graphql.headers = result.meta.headers;
+    if (hasRequestId) {
+      graphql.requestId = requestId;
     }
 
     if (hasErrors) {
-      graphql.errors = result.errors;
-    }
-
-    if (hasExtensions) {
-      graphql.extensions = result.extensions;
+      graphql.errors = sanitizedErrors;
     }
 
     return graphql;
+  }
+
+  private sanitizeGraphQLErrors(
+    errors?: GraphQLErrorDetail[]
+  ): GraphQLErrorDetail[] | undefined {
+    if (!errors || errors.length === 0) {
+      return undefined;
+    }
+
+    return errors.map(error => {
+      const sanitized: GraphQLErrorDetail = {
+        message: error.message,
+      };
+
+      if (error.path) {
+        sanitized.path = error.path;
+      }
+
+      const sanitizedExtensions = this.sanitizeGraphQLErrorExtensions(error.extensions);
+      if (sanitizedExtensions) {
+        sanitized.extensions = sanitizedExtensions;
+      }
+
+      return sanitized;
+    });
+  }
+
+  private sanitizeGraphQLErrorExtensions(
+    extensions?: Record<string, unknown>
+  ): Record<string, unknown> | undefined {
+    if (!extensions) {
+      return undefined;
+    }
+
+    const allowedKeys = ['code', 'type', 'statusCode', 'reason', 'classification'];
+    const sanitized = Object.fromEntries(
+      allowedKeys.flatMap(key => {
+        const value = extensions[key];
+        return value === undefined || Array.isArray(value) || (typeof value === 'object' && value !== null)
+          ? []
+          : [[key, value]];
+      })
+    );
+
+    return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+  }
+
+  private getGraphQLRequestId(
+    result: GraphQLResult<unknown>
+  ): string | undefined {
+    const requestIdHeaders = ['x-request-id', 'x-linear-request-id', 'request-id'];
+
+    for (const header of requestIdHeaders) {
+      const value = result.meta.headers[header];
+      if (typeof value === 'string' && value.length > 0) {
+        return value;
+      }
+    }
+
+    if (result.extensions && typeof result.extensions.requestId === 'string') {
+      return result.extensions.requestId;
+    }
+
+    return undefined;
   }
 }

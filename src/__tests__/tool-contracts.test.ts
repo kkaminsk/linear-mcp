@@ -91,6 +91,27 @@ describe('tool contracts', () => {
     });
   });
 
+  it('rejects conflicting issue state filters in list and search schemas', () => {
+    expect(toolSchemas.linear_list_issues.inputSchema).toMatchObject({
+      allOf: [
+        {
+          not: {
+            required: ['stateId', 'states'],
+          },
+        },
+      ],
+    });
+    expect(toolSchemas.linear_search_issues.inputSchema).toMatchObject({
+      allOf: [
+        {
+          not: {
+            required: ['stateId', 'states'],
+          },
+        },
+      ],
+    });
+  });
+
   it('advertises direct and lifecycle comment tools', () => {
     expect(toolSchemas.linear_get_comment.name).toBe('linear_get_comment');
     expect(toolSchemas.linear_list_comments.name).toBe('linear_list_comments');
@@ -137,6 +158,49 @@ describe('tool contracts', () => {
       properties: {
         initiativeId: {
           type: ['string', 'null'],
+        },
+      },
+    });
+  });
+
+  it('bounds flexible agent payload objects and narrows user state entries', () => {
+    expect(toolSchemas.linear_update_agent_session.inputSchema).toMatchObject({
+      properties: {
+        plan: {
+          type: 'object',
+          maxProperties: 20,
+        },
+        userState: {
+          type: 'array',
+          items: {
+            required: ['userId'],
+            properties: {
+              userId: {
+                type: 'string',
+              },
+              lastReadAt: {
+                type: 'string',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(toolSchemas.linear_create_agent_activity.inputSchema).toMatchObject({
+      required: ['agentSessionId', 'content'],
+      properties: {
+        content: {
+          type: 'object',
+          maxProperties: 20,
+        },
+        contextualMetadata: {
+          type: 'object',
+          maxProperties: 20,
+        },
+        signalMetadata: {
+          type: 'object',
+          maxProperties: 20,
         },
       },
     });

@@ -4,6 +4,7 @@ import { LinearClient } from '@linear/sdk';
 import { 
   CreateIssueInput, 
   CreateIssueResponse,
+  DeleteIssuesResponse,
   UpdateIssueInput,
   UpdateIssueResponse,
   UpdateIssuesResponse,
@@ -14,6 +15,7 @@ import {
 } from '../features/issues/types/issue.types';
 import {
   ProjectInput,
+  ProjectWithIssuesOutcome,
   ProjectResponse,
   SearchProjectsResponse,
   GetProjectResponse
@@ -48,16 +50,19 @@ describe('LinearGraphQLClient', () => {
   let linearClient: LinearClient;
   let mockRawRequest: jest.MockedFunction<(query: string, variables?: Record<string, unknown>) => Promise<GraphQLResponse<unknown>>>;
   let mockSearchIssues: jest.MockedFunction<(query: string, options?: Record<string, unknown>) => Promise<unknown>>;
+  let mockDeleteProject: jest.MockedFunction<(id: string) => Promise<unknown>>;
 
   beforeEach(() => {
     mockRawRequest = jest.fn();
     mockSearchIssues = jest.fn<(query: string, options?: Record<string, unknown>) => Promise<unknown>>();
+    mockDeleteProject = jest.fn<(id: string) => Promise<unknown>>();
     // Mock the Linear client's GraphQL client
     linearClient = {
       client: {
         rawRequest: mockRawRequest
       },
       searchIssues: mockSearchIssues,
+      deleteProject: mockDeleteProject,
     } as unknown as LinearClient;
 
     // Clear mocks
@@ -440,11 +445,15 @@ describe('LinearGraphQLClient', () => {
         const result = await graphqlClient.createProjectWithIssues(
           projectInput,
           [issueInput]
-        );
+        ) as ProjectWithIssuesOutcome;
         const [projectQuery, projectVariables] = mockRawRequest.mock.calls[0];
         const [issueQuery, issueVariables] = mockRawRequest.mock.calls[1];
 
         expect(result).toEqual({
+          success: true,
+          project: projectMockResponse.data.projectCreate.project,
+          issues: issueMockResponse.data.issueBatchCreate.issues,
+          lastSyncId: 124,
           projectCreate: projectMockResponse.data.projectCreate,
           issueBatchCreate: issueMockResponse.data.issueBatchCreate
         });
@@ -484,6 +493,10 @@ describe('LinearGraphQLClient', () => {
         const result = await graphqlClient.createProjectWithIssues(projectInput, []);
 
         expect(result).toEqual({
+          success: true,
+          project: projectMockResponse.data.projectCreate.project,
+          issues: [],
+          lastSyncId: 123,
           projectCreate: projectMockResponse.data.projectCreate,
         });
         expect(mockRawRequest).toHaveBeenCalledTimes(1);
@@ -513,9 +526,17 @@ describe('LinearGraphQLClient', () => {
           teamId: 'team-1'
         };
 
-        await expect(
-          graphqlClient.createProjectWithIssues(projectInput, [issueInput])
-        ).rejects.toThrow('Failed to create project');
+        const result = await graphqlClient.createProjectWithIssues(projectInput, [issueInput]);
+
+        expect(result).toEqual({
+          success: false,
+          failedStep: 'projectCreate',
+          message: 'Project creation did not complete before issue creation began.',
+          issueCreationAttempted: false,
+          compensationAttempted: false,
+          lastSyncId: 123,
+          projectCreate: errorResponse.data.projectCreate,
+        });
       });
 
       it('should handle issue creation errors', async () => {
@@ -546,6 +567,9 @@ describe('LinearGraphQLClient', () => {
         mockRawRequest
           .mockResolvedValueOnce(projectResponse)
           .mockResolvedValueOnce(errorResponse);
+        mockDeleteProject.mockResolvedValueOnce({
+          success: true,
+        });
 
         const projectInput: ProjectInput = {
           name: 'New Project',
@@ -558,9 +582,22 @@ describe('LinearGraphQLClient', () => {
           teamId: 'team-1'
         };
 
-        await expect(
-          graphqlClient.createProjectWithIssues(projectInput, [issueInput])
-        ).rejects.toThrow('Failed to create issues');
+        const result = await graphqlClient.createProjectWithIssues(projectInput, [issueInput]);
+
+        expect(result).toEqual({
+          success: false,
+          failedStep: 'issueBatchCreate',
+          message: 'Issue creation failed after project creation. The created project was deleted during compensation. Issue creation did not complete successfully.',
+          issueCreationAttempted: true,
+          compensationAttempted: true,
+          compensationSucceeded: true,
+          project: projectResponse.data.projectCreate.project,
+          issues: [],
+          lastSyncId: 124,
+          projectCreate: projectResponse.data.projectCreate,
+          issueBatchCreate: errorResponse.data.issueBatchCreate,
+        });
+        expect(mockDeleteProject).toHaveBeenCalledWith('project-1');
       });
     });
   });
@@ -678,7 +715,7 @@ describe('LinearGraphQLClient', () => {
       mockRawRequest.mockResolvedValueOnce(mockResponse);
 
       const ids = ['issue-1', 'issue-2'];
-      const result: DeleteIssueResponse = await graphqlClient.deleteIssues(ids);
+      const result: DeleteIssuesResponse = await graphqlClient.deleteIssues(ids);
 
       expect(result).toEqual(mockResponse.data);
       // Verify single mutation call

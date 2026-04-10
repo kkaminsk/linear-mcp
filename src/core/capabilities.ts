@@ -28,6 +28,7 @@ export interface RuntimeCapabilities {
   server: ServerBuildInfo;
   runtime: 'node';
   transport: RuntimeTransport;
+  authScope: 'server' | 'session';
   streamingSupported: boolean;
   supportsSubscriptions: boolean;
   endpoint: string | null;
@@ -88,6 +89,7 @@ export function getRuntimeCapabilities(
     server,
     runtime: 'node',
     transport,
+    authScope: transport === 'stream' ? 'session' : 'server',
     streamingSupported,
     supportsSubscriptions,
     endpoint: streamConfig?.endpoint ?? null,

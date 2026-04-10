@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { LinearClient } from '@linear/sdk';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { LinearGraphQLClient } from './graphql/client.js';
@@ -87,6 +88,8 @@ export class LinearAuth {
       );
     }
 
+    this.pendingOAuthState = undefined;
+
     try {
       const params = new URLSearchParams({
         grant_type: 'authorization_code',
@@ -102,7 +105,6 @@ export class LinearAuth {
         refreshToken: data.refresh_token ?? '',
         expiresAt: Date.now() + data.expires_in * 1000,
       });
-      this.pendingOAuthState = undefined;
     } catch (error) {
       throw new McpError(
         ErrorCode.InternalError,
@@ -195,8 +197,38 @@ export class LinearAuth {
     return this.pendingOAuthState;
   }
 
+  public createScopedCopy(): LinearAuth {
+    const copy = new LinearAuth();
+
+    if (!this.config) {
+      return copy;
+    }
+
+    copy.initialize(
+      this.config.type === 'api'
+        ? {
+            type: 'api',
+            apiKey: this.config.apiKey,
+          }
+        : {
+            type: 'oauth',
+            clientId: this.config.clientId,
+            clientSecret: this.config.clientSecret,
+            redirectUri: this.config.redirectUri,
+          }
+    );
+
+    if (this.tokenData) {
+      copy.setTokenData({
+        ...this.tokenData,
+      });
+    }
+
+    return copy;
+  }
+
   private generateState(): string {
-    return Math.random().toString(36).substring(2, 15);
+    return randomBytes(32).toString('base64url');
   }
 
   private getOAuthConfig(): OAuthConfig {

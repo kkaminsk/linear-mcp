@@ -14,6 +14,7 @@ export interface RuntimeEnvSnapshot {
   port?: string;
   path?: string;
   apiKey?: string;
+  accessToken?: string;
 }
 
 function restoreEnvVariable(name: string, value?: string): void {
@@ -32,6 +33,7 @@ export function captureRuntimeEnv(): RuntimeEnvSnapshot {
     port: process.env.LINEAR_MCP_PORT,
     path: process.env.LINEAR_MCP_PATH,
     apiKey: process.env.LINEAR_API_KEY,
+    accessToken: process.env.LINEAR_ACCESS_TOKEN,
   };
 }
 
@@ -41,6 +43,7 @@ export function restoreRuntimeEnv(snapshot: RuntimeEnvSnapshot): void {
   restoreEnvVariable('LINEAR_MCP_PORT', snapshot.port);
   restoreEnvVariable('LINEAR_MCP_PATH', snapshot.path);
   restoreEnvVariable('LINEAR_API_KEY', snapshot.apiKey);
+  restoreEnvVariable('LINEAR_ACCESS_TOKEN', snapshot.accessToken);
 }
 
 export async function getAvailablePort(): Promise<number> {
@@ -79,6 +82,10 @@ export class TestLinearAuth extends LinearAuth {
   override getGraphQLClient(): LinearGraphQLClient {
     return this.graphQLClient;
   }
+
+  override createScopedCopy(): LinearAuth {
+    return new TestLinearAuth(this.graphQLClient, this.smokeClient);
+  }
 }
 
 export interface RuntimeSmokeHarness {
@@ -93,13 +100,18 @@ export async function createRuntimeSmokeHarness(options: {
   clientName: string;
   clientVersion?: string;
   serverOptions?: LinearServerOptions;
+  apiKeyEnv?: {
+    LINEAR_API_KEY?: string;
+    LINEAR_ACCESS_TOKEN?: string;
+  };
 }): Promise<RuntimeSmokeHarness> {
   const port = await getAvailablePort();
   process.env.LINEAR_MCP_TRANSPORT = 'stream';
   process.env.LINEAR_MCP_HOST = '127.0.0.1';
   process.env.LINEAR_MCP_PORT = String(port);
   process.env.LINEAR_MCP_PATH = '/mcp';
-  delete process.env.LINEAR_API_KEY;
+  restoreEnvVariable('LINEAR_API_KEY', options.apiKeyEnv?.LINEAR_API_KEY);
+  restoreEnvVariable('LINEAR_ACCESS_TOKEN', options.apiKeyEnv?.LINEAR_ACCESS_TOKEN);
 
   const server = new LinearServer(options.serverOptions);
   const client = new Client(

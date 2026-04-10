@@ -20,10 +20,64 @@ import { formatServerBuildInfo, getServerBuildInfo } from './core/server-build.j
 import { HandlerFactory } from './core/handlers/handler.factory.js';
 import { BaseToolResponse, ToolHandlerMethod } from './core/interfaces/tool-handler.interface.js';
 import { getAdvertisedToolSchemas } from './core/types/tool.types.js';
+import { ToolValidationResult, ToolValidatorRegistry } from './core/validation/tool-validator.js';
 
 export interface LinearServerOptions {
   auth?: LinearAuth;
   capabilities?: RuntimeCapabilities;
+}
+
+type StartupApiKeyEnvName = 'LINEAR_API_KEY' | 'LINEAR_ACCESS_TOKEN';
+
+interface StartupApiKeySelection {
+  apiKey?: string;
+  source?: StartupApiKeyEnvName;
+  hasPrimary: boolean;
+  hasAlias: boolean;
+}
+
+function resolveStartupApiKeySelection(env: NodeJS.ProcessEnv = process.env): StartupApiKeySelection {
+  const primaryApiKey = env.LINEAR_API_KEY;
+  const aliasApiKey = env.LINEAR_ACCESS_TOKEN;
+
+  if (primaryApiKey) {
+    return {
+      apiKey: primaryApiKey,
+      source: 'LINEAR_API_KEY',
+      hasPrimary: true,
+      hasAlias: Boolean(aliasApiKey),
+    };
+  }
+
+  if (aliasApiKey) {
+    return {
+      apiKey: aliasApiKey,
+      source: 'LINEAR_ACCESS_TOKEN',
+      hasPrimary: false,
+      hasAlias: true,
+    };
+  }
+
+  return {
+    hasPrimary: false,
+    hasAlias: false,
+  };
+}
+
+function formatStartupAuthMessage(selection: StartupApiKeySelection): string {
+  if (selection.source === 'LINEAR_API_KEY' && selection.hasAlias) {
+    return 'Auth: both LINEAR_API_KEY and LINEAR_ACCESS_TOKEN detected. Using LINEAR_API_KEY.';
+  }
+
+  if (selection.source === 'LINEAR_API_KEY') {
+    return 'Auth: LINEAR_API_KEY detected.';
+  }
+
+  if (selection.source === 'LINEAR_ACCESS_TOKEN') {
+    return 'Auth: LINEAR_ACCESS_TOKEN detected.';
+  }
+
+  return 'Auth: no LINEAR_API_KEY or LINEAR_ACCESS_TOKEN detected. Set either variable for API-key auth or use linear_auth to start OAuth after installation.';
 }
 
 /**
@@ -32,17 +86,44 @@ export interface LinearServerOptions {
  */
 export class LinearServer {
   private server: Server;
-  private auth: LinearAuth;
+  private readonly authTemplate: LinearAuth;
+  private readonly stdioAuth: LinearAuth;
+  private readonly streamSessions = new Map<string, {
+    server: Server;
+    transport: StreamableHTTPServerTransport;
+  }>();
   private handlerFactory: HandlerFactory;
+  private readonly toolValidators: ToolValidatorRegistry;
   private capabilities: RuntimeCapabilities;
   private readonly buildInfo = getServerBuildInfo();
+  private readonly startupApiKeySelection: StartupApiKeySelection;
   private httpServer?: HttpServer;
   private readonly shutdownHandler = (): void => {
     void this.close().finally(() => process.exit(0));
   };
 
   constructor(options: LinearServerOptions = {}) {
-    this.server = new Server(
+    this.authTemplate = options.auth ?? new LinearAuth();
+    this.capabilities = options.capabilities ?? getRuntimeCapabilities({ server: this.buildInfo });
+
+    this.startupApiKeySelection = resolveStartupApiKeySelection();
+    const apiKey = this.startupApiKeySelection.apiKey;
+    if (apiKey && !options.auth) {
+      this.authTemplate.initialize({
+        type: 'api',
+        apiKey,
+      });
+    }
+
+    this.stdioAuth = this.authTemplate.createScopedCopy();
+    this.handlerFactory = new HandlerFactory(this.capabilities);
+    this.toolValidators = new ToolValidatorRegistry(this.capabilities);
+    this.server = this.createProtocolServer(this.stdioAuth);
+    process.once('SIGINT', this.shutdownHandler);
+  }
+
+  private createProtocolServer(auth: LinearAuth): Server {
+    const server = new Server(
       {
         name: this.buildInfo.name,
         version: this.buildInfo.version,
@@ -54,32 +135,29 @@ export class LinearServer {
       }
     );
 
-    this.auth = options.auth ?? new LinearAuth();
-    this.capabilities = options.capabilities ?? getRuntimeCapabilities({ server: this.buildInfo });
-
-    const apiKey = process.env.LINEAR_API_KEY;
-    if (apiKey) {
-      this.auth.initialize({
-        type: 'api',
-        apiKey,
-      });
-    }
-
-    this.handlerFactory = new HandlerFactory(this.auth, this.capabilities);
-    this.setupRequestHandlers();
-
-    this.server.onerror = error => console.error('[MCP Error]', error);
-    process.once('SIGINT', this.shutdownHandler);
-  }
-
-  private setupRequestHandlers(): void {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: getAdvertisedToolSchemas(this.capabilities),
     }));
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request): Promise<BaseToolResponse> => {
+    server.setRequestHandler(CallToolRequestSchema, async (request): Promise<BaseToolResponse> => {
       try {
-        const { handler, method } = this.handlerFactory.getHandlerForTool(request.params.name);
+        if (!this.toolValidators.hasTool(request.params.name)) {
+          throw new McpError(
+            ErrorCode.MethodNotFound,
+            `Unknown tool: ${request.params.name}`
+          );
+        }
+
+        const validation = this.toolValidators.validate(
+          request.params.name,
+          request.params.arguments
+        );
+
+        if (!validation.valid) {
+          return this.createValidationErrorResponse(request.params.name, validation);
+        }
+
+        const { handler, method } = this.handlerFactory.getHandlerForTool(request.params.name, auth);
         const toolMethod = (handler as unknown as Record<string, ToolHandlerMethod>)[method];
 
         if (typeof toolMethod !== 'function') {
@@ -88,35 +166,38 @@ export class LinearServer {
 
         return await toolMethod.call(
           handler,
-          request.params.arguments ?? {}
+          validation.data
         );
       } catch (error) {
-        if (error instanceof Error && error.message.startsWith('No handler found')) {
+        if (error instanceof McpError && error.code === ErrorCode.MethodNotFound) {
           throw new McpError(
             ErrorCode.MethodNotFound,
             `Unknown tool: ${request.params.name}`
           );
         }
 
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        return {
-          content: [
+        if (error instanceof McpError) {
+          return this.createRuntimeErrorResponse(
+            request.params.name,
+            'mcp',
+            error.message,
             {
-              type: 'text',
-              text: `Failed to execute ${request.params.name}: ${message}`,
-            },
-          ],
-          structuredContent: {
-            tool: request.params.name,
-            error: {
-              type: 'internal',
-              message,
-            },
-          },
-          isError: true,
-        };
+              code: error.code,
+            }
+          );
+        }
+
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return this.createRuntimeErrorResponse(
+          request.params.name,
+          'internal',
+          message
+        );
       }
     });
+
+    server.onerror = error => console.error('[MCP Error]', error);
+    return server;
   }
 
   async run(): Promise<void> {
@@ -130,6 +211,10 @@ export class LinearServer {
 
   async close(): Promise<void> {
     process.off('SIGINT', this.shutdownHandler);
+
+    const streamSessionServers = Array.from(this.streamSessions.values()).map(session => session.server);
+    this.streamSessions.clear();
+    await Promise.all(streamSessionServers.map(server => server.close().catch(() => undefined)));
 
     if (this.httpServer) {
       await new Promise<void>((resolve, reject) => {
@@ -149,11 +234,6 @@ export class LinearServer {
 
   private async runStreamTransport(): Promise<void> {
     const streamConfig = getStreamTransportConfig();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-    });
-
-    await this.server.connect(transport);
 
     this.httpServer = createServer(async (req, res) => {
       const baseUrl = `http://${req.headers.host ?? `${streamConfig.host}:${streamConfig.port}`}`;
@@ -161,7 +241,7 @@ export class LinearServer {
 
       if (requestUrl.pathname === streamConfig.path) {
         try {
-          await transport.handleRequest(req, res);
+          await this.handleStreamRequest(req, res);
         } catch (error) {
           console.error('[MCP HTTP Error]', error);
           if (!res.headersSent) {
@@ -203,12 +283,115 @@ export class LinearServer {
       console.error('Remote stream endpoint is disabled in stdio mode. Set LINEAR_MCP_TRANSPORT=stream to expose a remote MCP endpoint.');
     }
 
-    if (process.env.LINEAR_API_KEY) {
-      console.error('Auth: LINEAR_API_KEY detected.');
+    console.error(formatStartupAuthMessage(this.startupApiKeySelection));
+  }
+
+  private createValidationErrorResponse(
+    toolName: string,
+    validation: Extract<ToolValidationResult, { valid: false }>
+  ): BaseToolResponse {
+    return this.createRuntimeErrorResponse(
+      toolName,
+      'validation',
+      validation.message,
+      {
+        code: ErrorCode.InvalidParams,
+        details: validation.issues,
+      }
+    );
+  }
+
+  private createRuntimeErrorResponse(
+    toolName: string,
+    type: 'internal' | 'mcp' | 'validation',
+    message: string,
+    details: Record<string, unknown> = {}
+  ): BaseToolResponse {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Failed to execute ${toolName}: ${message}`,
+        },
+      ],
+      structuredContent: {
+        tool: toolName,
+        error: {
+          type,
+          message,
+          ...details,
+        },
+      },
+      isError: true,
+    };
+  }
+
+  private async handleStreamRequest(
+    req: Parameters<StreamableHTTPServerTransport['handleRequest']>[0],
+    res: Parameters<StreamableHTTPServerTransport['handleRequest']>[1]
+  ): Promise<void> {
+    const sessionIdHeader = req.headers['mcp-session-id'];
+    const sessionId = Array.isArray(sessionIdHeader) ? sessionIdHeader[0] : sessionIdHeader;
+
+    if (sessionId) {
+      const existingSession = this.streamSessions.get(sessionId);
+      if (!existingSession) {
+        this.writeJsonRpcError(res, 404, -32001, 'Session not found');
+        return;
+      }
+
+      await existingSession.transport.handleRequest(req, res);
       return;
     }
 
-    console.error('Auth: no LINEAR_API_KEY detected. Set LINEAR_API_KEY for API-key auth or use linear_auth to start OAuth after installation.');
+    const auth = this.authTemplate.createScopedCopy();
+    const server = this.createProtocolServer(auth);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+    });
+
+    transport.onclose = () => {
+      if (transport.sessionId) {
+        this.streamSessions.delete(transport.sessionId);
+      }
+    };
+
+    await server.connect(transport);
+
+    try {
+      await transport.handleRequest(req, res);
+
+      if (transport.sessionId) {
+        this.streamSessions.set(transport.sessionId, {
+          server,
+          transport,
+        });
+        return;
+      }
+    } catch (error) {
+      await server.close().catch(() => undefined);
+      throw error;
+    }
+
+    await server.close().catch(() => undefined);
+  }
+
+  private writeJsonRpcError(
+    res: Parameters<StreamableHTTPServerTransport['handleRequest']>[1],
+    status: number,
+    code: number,
+    message: string
+  ): void {
+    res.statusCode = status;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code,
+        message,
+      },
+      id: null,
+    }));
   }
 }
 

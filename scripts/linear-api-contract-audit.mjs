@@ -70,6 +70,27 @@ export const guardedIssueWorkflowContracts = [
     ],
   },
   {
+    name: 'bulk-delete GraphQL document',
+    owner: 'LinearGraphQLClient.deleteIssues raw GraphQL helper',
+    file: 'src/graphql/mutations.ts',
+    requiredSnippets: [
+      'mutation DeleteIssues($ids: [String!]!)',
+      'issueDelete(ids: $ids)',
+    ],
+    forbiddenSnippets: [],
+  },
+  {
+    name: 'bulk-delete helper',
+    owner: 'LinearGraphQLClient.deleteIssues',
+    file: 'src/graphql/client.ts',
+    requiredSnippets: [
+      'async deleteIssues(ids: string[]): Promise<DeleteIssuesResponse>',
+      "const { DELETE_ISSUES_MUTATION } = await import('./mutations.js');",
+      'return this.executeData<DeleteIssuesResponse>(DELETE_ISSUES_MUTATION, { ids });',
+    ],
+    forbiddenSnippets: [],
+  },
+  {
     name: 'issue search handler ownership',
     owner: 'IssueHandler.handleSearchIssues query-aware MCP path',
     file: 'src/features/issues/handlers/issue.handler.ts',

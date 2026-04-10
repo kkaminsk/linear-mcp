@@ -54,7 +54,7 @@ src/
 
 `LinearAuth` supports:
 
-- API key authentication from `LINEAR_API_KEY`
+- API key authentication from `LINEAR_API_KEY` or `LINEAR_ACCESS_TOKEN` (with `LINEAR_API_KEY` taking precedence when both are set)
 - OAuth authorization URL generation with Linear-supported parameters
 - single-use callback state validation
 - awaited token refresh

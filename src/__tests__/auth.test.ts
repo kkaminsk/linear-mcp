@@ -72,6 +72,24 @@ describe('LinearAuth', () => {
       expect(url).not.toContain('access_type=');
     });
 
+    it('should generate cryptographically strong single-use state values', () => {
+      auth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+
+      auth.getAuthorizationUrl();
+      const firstState = auth.getPendingOAuthState();
+      auth.getAuthorizationUrl();
+      const secondState = auth.getPendingOAuthState();
+
+      expect(firstState).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      expect(secondState).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      expect(secondState).not.toBe(firstState);
+    });
+
     it('should throw error when called with API Key config', () => {
       auth.initialize({
         type: 'api',
@@ -145,6 +163,32 @@ describe('LinearAuth', () => {
       const state = auth.getPendingOAuthState();
 
       await expect(auth.handleCallback('invalid-code', state!)).rejects.toThrow();
+    });
+
+    it('should reject state replay after a failed token exchange', async () => {
+      auth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+
+      mockFetch.mockResolvedValueOnce(new Response(
+        JSON.stringify({
+          error: 'invalid_grant'
+        }),
+        { status: 400 }
+      ));
+
+      auth.getAuthorizationUrl();
+      const state = auth.getPendingOAuthState();
+
+      await expect(auth.handleCallback('invalid-code', state!)).rejects.toThrow(
+        'OAuth token exchange failed'
+      );
+      await expect(auth.handleCallback('invalid-code', state!)).rejects.toThrow(
+        'No pending OAuth authorization request was found'
+      );
     });
 
     it('should reject callback state mismatches', async () => {

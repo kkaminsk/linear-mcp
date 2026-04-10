@@ -19,6 +19,7 @@ export class SubscriptionHandler extends BaseHandler {
         server: this.runtimeCapabilities.server,
         runtime: this.runtimeCapabilities.runtime,
         transport: this.runtimeCapabilities.transport,
+        authScope: this.runtimeCapabilities.authScope,
         endpoint: this.runtimeCapabilities.endpoint,
         streamingSupported: this.runtimeCapabilities.streamingSupported,
         capabilities: this.runtimeCapabilities.capabilities,
@@ -74,6 +75,7 @@ export class SubscriptionHandler extends BaseHandler {
     runtimeSupported: boolean = this.runtimeCapabilities.supportsSubscriptions
   ): BaseToolResponse {
     return this.createErrorResponse(message, {
+      authScope: this.runtimeCapabilities.authScope,
       error: {
         type: 'capability',
         capability,

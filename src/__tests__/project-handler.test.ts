@@ -3,6 +3,8 @@ import { LinearAuth } from '../auth.js';
 import { ProjectHandler } from '../features/projects/handlers/project.handler.js';
 import {
   ProjectInput,
+  ProjectWithIssuesInput,
+  ProjectWithIssuesOutcome,
   UpdateProjectInput,
 } from '../features/projects/types/project.types.js';
 
@@ -14,6 +16,10 @@ type MockProjectSdk = {
 type MockProjectClient = {
   sdk: MockProjectSdk;
   executeSdk: jest.MockedFunction<(operation: string, request: () => Promise<unknown>) => Promise<unknown>>;
+  createProjectWithIssues: jest.MockedFunction<(
+    project: ProjectInput,
+    issues: ProjectWithIssuesInput['issues']
+  ) => Promise<ProjectWithIssuesOutcome>>;
 };
 
 describe('ProjectHandler', () => {
@@ -30,6 +36,10 @@ describe('ProjectHandler', () => {
       sdk,
       executeSdk: jest.fn<(operation: string, request: () => Promise<unknown>) => Promise<unknown>>()
         .mockImplementation(async (_operation, request) => request()),
+      createProjectWithIssues: jest.fn<(
+        project: ProjectInput,
+        issues: ProjectWithIssuesInput['issues']
+      ) => Promise<ProjectWithIssuesOutcome>>(),
     };
 
     const auth = {
@@ -106,5 +116,100 @@ describe('ProjectHandler', () => {
         initiative: expect.anything(),
       })
     );
+  });
+
+  it('fails before issue creation when project creation does not return a usable identifier', async () => {
+    const args: ProjectWithIssuesInput = {
+      project: {
+        name: 'Roadmap',
+        teamIds: ['team-1'],
+      },
+      issues: [
+        {
+          title: 'First issue',
+          teamId: 'team-1',
+        },
+      ],
+    };
+
+    mockClient.createProjectWithIssues.mockResolvedValueOnce({
+      success: false,
+      failedStep: 'projectCreate',
+      message: 'Project creation did not complete before issue creation began.',
+      issueCreationAttempted: false,
+      compensationAttempted: false,
+      projectCreate: {
+        success: false,
+        project: undefined,
+      },
+    });
+
+    const result = await handler.handleCreateProjectWithIssues(args);
+
+    expect(mockClient.createProjectWithIssues).toHaveBeenCalledWith(args.project, args.issues);
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      success: false,
+      error: {
+        type: 'workflow',
+        failedStep: 'projectCreate',
+        issueCreationAttempted: false,
+      },
+    });
+  });
+
+  it('surfaces explicit partial state when issue creation fails and compensation does not complete', async () => {
+    const args: ProjectWithIssuesInput = {
+      project: {
+        name: 'Roadmap',
+        teamIds: ['team-1'],
+      },
+      issues: [
+        {
+          title: 'First issue',
+          teamId: 'team-1',
+        },
+      ],
+    };
+
+    mockClient.createProjectWithIssues.mockResolvedValueOnce({
+      success: false,
+      failedStep: 'issueBatchCreate',
+      message: 'Issue creation failed after project creation and compensation did not remove the created project.',
+      issueCreationAttempted: true,
+      compensationAttempted: true,
+      compensationSucceeded: false,
+      project: {
+        id: 'project-1',
+        name: 'Roadmap',
+        url: 'https://linear.app/test/project/project-1',
+      },
+      issues: [],
+      projectCreate: {
+        success: true,
+        project: {
+          id: 'project-1',
+          name: 'Roadmap',
+          url: 'https://linear.app/test/project/project-1',
+        },
+      },
+    });
+
+    const result = await handler.handleCreateProjectWithIssues(args);
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      partialState: {
+        projectId: 'project-1',
+        projectName: 'Roadmap',
+        failedStep: 'issueBatchCreate',
+      },
+      error: {
+        type: 'workflow',
+        failedStep: 'issueBatchCreate',
+        compensationAttempted: true,
+        compensationSucceeded: false,
+      },
+    });
   });
 });

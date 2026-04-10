@@ -10,6 +10,7 @@ describe('runtime capabilities', () => {
     const capabilities = getRuntimeCapabilities({ transport: 'stdio' });
     const toolNames = getAdvertisedToolSchemas(capabilities).map(tool => tool.name);
 
+    expect(capabilities.authScope).toBe('server');
     expect(capabilities.endpoint).toBeNull();
     expect(toolNames).toContain('linear_get_capabilities');
     expect(toolNames).not.toContain('linear_start_subscription');
@@ -23,6 +24,7 @@ describe('runtime capabilities', () => {
     });
     const toolNames = getAdvertisedToolSchemas(capabilities).map(tool => tool.name);
 
+    expect(capabilities.authScope).toBe('session');
     expect(capabilities.endpoint).toBe('http://127.0.0.1:3000/mcp');
     expect(toolNames).toContain('linear_start_subscription');
     expect(toolNames).toContain('linear_stop_subscription');
@@ -38,6 +40,7 @@ describe('runtime capabilities', () => {
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
+      authScope: 'server',
       error: {
         type: 'capability',
         capability: 'subscriptions',
