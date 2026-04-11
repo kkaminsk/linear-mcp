@@ -24,6 +24,7 @@ type MockCommentClient = {
   getComment: jest.MockedFunction<(args: GetCommentInput) => Promise<GetCommentResponse>>;
   listComments: jest.MockedFunction<(args?: ListCommentsInput) => Promise<ListCommentsResponse>>;
   getIssueComments: jest.MockedFunction<(args: GetIssueCommentsInput) => Promise<GetIssueCommentsResponse>>;
+  findIssueByIdentifier: jest.MockedFunction<(identifier: string, extraFilter?: Record<string, unknown>) => Promise<unknown | undefined>>;
   createComment: jest.MockedFunction<(args: CreateCommentInput) => Promise<CreateCommentResponse>>;
   updateComment: jest.MockedFunction<(args: UpdateCommentInput) => Promise<UpdateCommentResponse>>;
   deleteComment: jest.MockedFunction<(args: DeleteCommentInput) => Promise<DeleteCommentResponse>>;
@@ -40,6 +41,7 @@ describe('CommentHandler', () => {
       getComment: jest.fn<(args: GetCommentInput) => Promise<GetCommentResponse>>(),
       listComments: jest.fn<(args?: ListCommentsInput) => Promise<ListCommentsResponse>>(),
       getIssueComments: jest.fn<(args: GetIssueCommentsInput) => Promise<GetIssueCommentsResponse>>(),
+      findIssueByIdentifier: jest.fn<(identifier: string, extraFilter?: Record<string, unknown>) => Promise<unknown | undefined>>(),
       createComment: jest.fn<(args: CreateCommentInput) => Promise<CreateCommentResponse>>(),
       updateComment: jest.fn<(args: UpdateCommentInput) => Promise<UpdateCommentResponse>>(),
       deleteComment: jest.fn<(args: DeleteCommentInput) => Promise<DeleteCommentResponse>>(),
@@ -153,6 +155,10 @@ describe('CommentHandler', () => {
   });
 
   it('returns paginated issue comments with shared projection metadata', async () => {
+    mockClient.findIssueByIdentifier.mockResolvedValueOnce({
+      id: 'issue-1',
+      identifier: 'TEST-1',
+    });
     mockClient.getIssueComments.mockResolvedValueOnce({
       issue: {
         id: 'issue-1',
@@ -183,7 +189,7 @@ describe('CommentHandler', () => {
     });
 
     const result = await handler.handleGetIssueComments({
-      issueId: 'issue-1',
+      issueId: 'TEST-1',
       first: 10,
       filter: {
         parent: {
@@ -193,6 +199,17 @@ describe('CommentHandler', () => {
       orderBy: 'updatedAt',
     });
 
+    expect(mockClient.findIssueByIdentifier).toHaveBeenCalledWith('TEST-1');
+    expect(mockClient.getIssueComments).toHaveBeenCalledWith({
+      issueId: 'issue-1',
+      first: 10,
+      filter: {
+        parent: {
+          null: true,
+        },
+      },
+      orderBy: 'updatedAt',
+    });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
       issue: {

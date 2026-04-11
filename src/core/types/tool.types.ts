@@ -997,7 +997,7 @@ const baseToolSchemas: Record<string, ToolSchema> = {
     'linear_get_issue_comments',
     'Get comments for a specific issue using native collection controls',
     {
-      issueId: stringProp('Issue ID'),
+      issueId: stringProp('Issue ID or identifier'),
       ...commentCollectionFields,
     },
     ['issueId']

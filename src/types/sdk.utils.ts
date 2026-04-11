@@ -65,7 +65,8 @@ export async function callFetchMethod(
     return undefined;
   }
 
-  return (method as (variables?: Record<string, unknown>) => Promise<unknown>)(variables);
+  return (method as (this: SdkRecord, variables?: Record<string, unknown>) => Promise<unknown>)
+    .call(record, variables);
 }
 
 export function compactObject<T extends Record<string, unknown>>(value: T): T {

@@ -24,14 +24,13 @@ export const guardedIssueWorkflowContracts = [
   },
   {
     name: 'single-create MCP tool',
-    owner: 'IssueHandler.handleCreateIssue SDK path',
+    owner: 'IssueHandler.handleCreateIssue raw GraphQL path',
     file: 'src/features/issues/handlers/issue.handler.ts',
     requiredSnippets: [
-      "'createIssue'",
-      '() => client.sdk.createIssue(args)',
+      'const payload = await client.createIssue(args);',
     ],
     forbiddenSnippets: [
-      'client.createIssue(args)',
+      'client.sdk.createIssue(args)',
     ],
   },
   {

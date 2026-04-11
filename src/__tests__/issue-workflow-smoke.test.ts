@@ -52,7 +52,6 @@ describe('issue workflow smoke tests', () => {
         },
       }) as { structuredContent?: Record<string, unknown> };
 
-      expect(backend.executeSdk).toHaveBeenCalledWith('createIssue', expect.any(Function));
       expect(backend.createIssue).toHaveBeenCalledWith({
         title: 'Smoke created issue',
         teamId: 'team-1',

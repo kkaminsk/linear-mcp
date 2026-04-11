@@ -20,7 +20,9 @@ type MockIssueSdk = {
 type MockIssueClient = {
   sdk: MockIssueSdk;
   executeSdk: jest.MockedFunction<(operation: string, request: () => Promise<unknown>) => Promise<unknown>>;
+  createIssue: jest.MockedFunction<(args: CreateIssueInput) => Promise<unknown>>;
   searchIssues: jest.MockedFunction<(query: string, options?: Omit<SearchIssuesInput, 'query'>) => Promise<SearchIssuesResponse>>;
+  findIssueByIdentifier: jest.MockedFunction<(identifier: string, extraFilter?: Record<string, unknown>) => Promise<unknown | undefined>>;
 };
 
 describe('IssueHandler', () => {
@@ -40,7 +42,9 @@ describe('IssueHandler', () => {
       sdk,
       executeSdk: jest.fn<(operation: string, request: () => Promise<unknown>) => Promise<unknown>>()
         .mockImplementation(async (_operation, request) => request()),
+      createIssue: jest.fn<(args: CreateIssueInput) => Promise<unknown>>(),
       searchIssues: jest.fn<(query: string, options?: Omit<SearchIssuesInput, 'query'>) => Promise<SearchIssuesResponse>>(),
+      findIssueByIdentifier: jest.fn<(identifier: string, extraFilter?: Record<string, unknown>) => Promise<unknown | undefined>>(),
     };
 
     const auth = {
@@ -58,13 +62,7 @@ describe('IssueHandler', () => {
       identifier: 'TEAM-2',
       title: 'Child issue',
       url: 'https://linear.app/test/issue/TEAM-2',
-      parent: Promise.resolve({
-        id: 'issue-1',
-        identifier: 'TEAM-1',
-        title: 'Parent issue',
-        url: 'https://linear.app/test/issue/TEAM-1',
-      }),
-      children: async () => ({
+      _children: {
         nodes: [
           {
             id: 'issue-3',
@@ -77,7 +75,16 @@ describe('IssueHandler', () => {
           hasNextPage: false,
           endCursor: null,
         },
+      },
+      parent: Promise.resolve({
+        id: 'issue-1',
+        identifier: 'TEAM-1',
+        title: 'Parent issue',
+        url: 'https://linear.app/test/issue/TEAM-1',
       }),
+      children: async function(this: { _children: unknown }) {
+        return this._children;
+      },
     });
 
     const result = await handler.handleGetIssue({ id: 'issue-2' });
@@ -100,6 +107,32 @@ describe('IssueHandler', () => {
     });
   });
 
+  it('resolves issue identifiers before loading detailed issue data', async () => {
+    mockClient.findIssueByIdentifier.mockResolvedValueOnce({
+      id: 'issue-431',
+      identifier: 'POL-431',
+    });
+    mockClient.sdk.issue.mockResolvedValueOnce({
+      id: 'issue-431',
+      identifier: 'POL-431',
+      title: 'Exact identifier hit',
+      url: 'https://linear.app/test/issue/POL-431',
+    });
+
+    const result = await handler.handleGetIssue({ id: 'pol-431' });
+
+    expect(mockClient.findIssueByIdentifier).toHaveBeenCalledWith('pol-431');
+    expect(mockClient.sdk.issue).toHaveBeenCalledWith('issue-431');
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      issue: {
+        id: 'issue-431',
+        identifier: 'POL-431',
+        title: 'Exact identifier hit',
+      },
+    });
+  });
+
   it('returns the assigned parent on issue creation responses', async () => {
     const args: CreateIssueInput = {
       title: 'Child issue',
@@ -107,7 +140,7 @@ describe('IssueHandler', () => {
       parentId: 'issue-1',
     };
 
-    mockClient.sdk.createIssue.mockResolvedValueOnce({
+    mockClient.createIssue.mockResolvedValueOnce({
       success: true,
       issue: {
         id: 'issue-2',
@@ -125,7 +158,7 @@ describe('IssueHandler', () => {
 
     const result = await handler.handleCreateIssue(args);
 
-    expect(mockClient.sdk.createIssue).toHaveBeenCalledWith(args);
+    expect(mockClient.createIssue).toHaveBeenCalledWith(args);
     expect(mockClient.sdk.createIssueBatch).not.toHaveBeenCalled();
     expect(result.structuredContent).toMatchObject({
       issue: {

@@ -206,14 +206,15 @@ Example project update:
 - `stateId` and `states` are mutually exclusive on both list and search requests.
 - `linear_search_issues` does not accept a generic `filter` object or `orderBy`; those list-style controls stay on `linear_list_issues`.
 - The search path sends `query` through Linear's search backend instead of encoding it as an issue filter field.
+- Exact issue identifiers like `POL-431` resolve through a deterministic team-key + issue-number lookup before falling back to ranked search results.
 - Current regression coverage covers both query-only and query-plus-filter search behavior.
 
 ## Guarded issue workflow contracts
 
-- `linear_create_issue` and `linear_create_issues` stay on the SDK-backed MCP handler path, while the internal raw GraphQL issue-create helpers remain limited to the audited document shapes used by shared helper flows.
+- `linear_create_issue` uses the audited raw GraphQL single-create helper so the MCP tool does not inherit SDK mutation-shape regressions. `linear_create_issues` remains on the SDK-backed batch-create path.
 - Raw GraphQL single-create stays on `IssueCreateInput!` and batch-create stays on `IssueBatchCreateInput!`; the repo guards against reintroducing array-shaped single-create input.
 - Raw GraphQL bulk delete stays on `issueDelete(ids: $ids)` and the repo audits that helper contract separately from the MCP handler's deterministic per-ID result shaping.
-- `linear_search_issues` stays on the SDK `searchIssues(query, options)` path. The repo does not keep a raw `SEARCH_ISSUES_QUERY` or `searchIssuesRaw` helper for free-text issue search.
+- `linear_search_issues` keeps free-text queries on the raw `searchIssues(term: ...)` GraphQL path, with exact identifier lookups handled separately so issue references like `POL-431` stay reliable.
 - Run `npm run verify:linear-api-contracts` to audit those guarded contracts locally. `npm run verify:release` includes the same audit before packaging.
 
 ## Critical issue workflow smoke coverage
@@ -235,6 +236,7 @@ npm run verify:package-install
 ### Troubleshooting
 
 - Run `linear_get_capabilities` to confirm the runtime is reporting the expected packaged server name/version before debugging tool behavior.
+- If `linear_search_issues` fails with an `IssueFilter.search` GraphQL error, the client is still connected to a stale build or package that predates the raw search fix. Rebuild or reinstall the package, restart the MCP server, and re-check `linear_get_capabilities`.
 - If startup logs say `Auth: no LINEAR_API_KEY or LINEAR_ACCESS_TOKEN detected`, the package installed correctly and you only need to finish auth setup.
 - If a remote client hangs on `/sse`, switch it to the configured streamable HTTP endpoint such as `/mcp`, or run the server in stdio mode for local clients.
 - Before publishing, run `npm run verify:release` to rebuild, validate the built tool catalog, and smoke-test a fresh package install.
@@ -243,6 +245,7 @@ npm run verify:package-install
 
 - `linear_get_comment` returns a direct comment payload with stable IDs, author metadata, issue context, parent linkage, and resolution state when present.
 - `linear_list_comments` and `linear_get_issue_comments` both accept Linear-style collection controls: `first`, `after`, `last`, `before`, `filter`, `includeArchived`, and `orderBy`.
+- `linear_get_issue_comments` accepts either a Linear issue ID or a human-friendly issue identifier such as `POL-431`.
 - `linear_create_comment` and `linear_update_comment` use markdown `body` as the primary content field. `bodyData` remains optional advanced structured content for clients that need it.
 
 ## Released tool surface (Version 1.0.0)

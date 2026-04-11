@@ -50,16 +50,22 @@ describe('LinearGraphQLClient', () => {
   let linearClient: LinearClient;
   let mockRawRequest: jest.MockedFunction<(query: string, variables?: Record<string, unknown>) => Promise<GraphQLResponse<unknown>>>;
   let mockDeleteProject: jest.MockedFunction<(id: string) => Promise<unknown>>;
+  let mockIssue: jest.MockedFunction<(id: string) => Promise<unknown>>;
+  let mockIssues: jest.MockedFunction<(args?: Record<string, unknown>) => Promise<unknown>>;
 
   beforeEach(() => {
     mockRawRequest = jest.fn();
     mockDeleteProject = jest.fn<(id: string) => Promise<unknown>>();
+    mockIssue = jest.fn<(id: string) => Promise<unknown>>();
+    mockIssues = jest.fn<(args?: Record<string, unknown>) => Promise<unknown>>();
     // Mock the Linear client's GraphQL client
     linearClient = {
       client: {
         rawRequest: mockRawRequest
       },
       deleteProject: mockDeleteProject,
+      issue: mockIssue,
+      issues: mockIssues,
     } as unknown as LinearClient;
 
     // Clear mocks
@@ -207,7 +213,16 @@ describe('LinearGraphQLClient', () => {
       const [, variables] = mockRawRequest.mock.calls[0];
       expect(variables).toEqual(expect.objectContaining({
         term: 'TEST-123',
+        first: 50,
         filter: {
+          team: {
+            key: {
+              eq: 'TEST'
+            }
+          },
+          number: {
+            eq: 123
+          },
           state: {
             name: {
               in: ['Done']
@@ -219,12 +234,187 @@ describe('LinearGraphQLClient', () => {
       expect((variables as Record<string, unknown>).filter).not.toHaveProperty('search');
     });
 
+    it('keeps exact identifier lookups on the search path so pagination metadata stays intact', async () => {
+      mockRawRequest.mockResolvedValueOnce({
+        data: {
+          searchIssues: {
+            nodes: [
+              {
+                id: 'issue-431',
+                identifier: 'POL-431',
+                title: 'Exact identifier hit',
+                url: 'https://linear.app/test/issue/POL-431'
+              }
+            ],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null
+            },
+            totalCount: 1,
+          }
+        }
+      });
+
+      const result: SearchIssuesResponse = await graphqlClient.searchIssues('pol-431');
+
+      expect(result).toEqual({
+        issues: {
+          nodes: [
+            {
+              id: 'issue-431',
+              identifier: 'POL-431',
+              title: 'Exact identifier hit',
+              url: 'https://linear.app/test/issue/POL-431'
+            }
+          ],
+          pageInfo: {
+            hasNextPage: false,
+            endCursor: null
+          }
+        },
+        totalCount: 1,
+      });
+      const [query, variables] = mockRawRequest.mock.calls[0];
+      expect(query).toContain('searchIssues');
+      expect(variables).toEqual({
+        term: 'pol-431',
+        filter: {
+          team: {
+            key: {
+              eq: 'POL'
+            }
+          },
+          number: {
+            eq: 431
+          }
+        },
+        first: 50,
+      });
+      expect(mockIssues).not.toHaveBeenCalled();
+    });
+
+    it('falls back to deterministic identifier lookup when exact search returns no hits', async () => {
+      mockRawRequest.mockResolvedValueOnce({
+        data: {
+          searchIssues: {
+            nodes: [],
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null
+            },
+            totalCount: 0,
+          }
+        }
+      });
+      mockIssues.mockResolvedValueOnce({
+        nodes: [
+          {
+            id: 'issue-431',
+            identifier: 'POL-431',
+            title: 'Exact identifier hit',
+            url: 'https://linear.app/test/issue/POL-431'
+          }
+        ],
+        pageInfo: {
+          hasNextPage: false,
+          endCursor: null
+        }
+      });
+
+      const result: SearchIssuesResponse = await graphqlClient.searchIssues('pol-431');
+
+      expect(result).toEqual({
+        issues: {
+          nodes: [
+            {
+              id: 'issue-431',
+              identifier: 'POL-431',
+              title: 'Exact identifier hit',
+              url: 'https://linear.app/test/issue/POL-431'
+            }
+          ],
+          pageInfo: {
+            hasNextPage: false,
+            endCursor: null
+          }
+        },
+        totalCount: 1,
+      });
+      expect(mockIssues).toHaveBeenCalledWith({
+        filter: {
+          team: {
+            key: {
+              eq: 'POL'
+            }
+          },
+          number: {
+            eq: 431
+          }
+        },
+        first: 1,
+      });
+    });
+
     it('should handle search errors', async () => {
       mockRawRequest.mockRejectedValueOnce(new Error('Search failed'));
 
       await expect(
         graphqlClient.searchIssues('search feature')
       ).rejects.toThrow('GraphQL operation SearchIssues failed');
+    });
+  });
+
+  describe('findIssueByIdentifier', () => {
+    it('returns undefined for non-identifier queries without calling issue listing', async () => {
+      await expect(graphqlClient.findIssueByIdentifier('search feature')).resolves.toBeUndefined();
+      expect(mockIssues).not.toHaveBeenCalled();
+    });
+
+    it('merges exact identifier lookup with existing issue filters', async () => {
+      mockIssues.mockResolvedValueOnce({
+        nodes: [
+          {
+            id: 'issue-431',
+            identifier: 'POL-431',
+            title: 'Filtered identifier hit'
+          }
+        ],
+        pageInfo: {
+          hasNextPage: false,
+          endCursor: null
+        }
+      });
+
+      const result = await graphqlClient.findIssueByIdentifier('POL-431', {
+        project: {
+          id: {
+            eq: 'project-1'
+          }
+        }
+      });
+
+      expect(result).toMatchObject({
+        id: 'issue-431',
+        identifier: 'POL-431',
+      });
+      expect(mockIssues).toHaveBeenCalledWith({
+        filter: {
+          project: {
+            id: {
+              eq: 'project-1'
+            }
+          },
+          team: {
+            key: {
+              eq: 'POL'
+            }
+          },
+          number: {
+            eq: 431
+          }
+        },
+        first: 1,
+      });
     });
   });
 

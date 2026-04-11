@@ -23,6 +23,10 @@ function runNpm(args, options = {}) {
   });
 }
 
+function readInstalledFile(installedRoot, relativePath) {
+  return readFileSync(join(installedRoot, ...relativePath.split('/')), 'utf8');
+}
+
 const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 assert(packageJson.bin?.['linear-mcp'] === './build/index.js', 'package.json must publish the linear-mcp executable from build/index.js.');
 assert(Array.isArray(packageJson.files) && packageJson.files.includes('build'), 'package.json must publish the build directory.');
@@ -65,8 +69,28 @@ try {
     }
   );
 
-  const installedBuild = join(tempDir, 'node_modules', packageJson.name, 'build', 'index.js');
+  const installedPackageRoot = join(tempDir, 'node_modules', packageJson.name);
+  const installedBuild = join(installedPackageRoot, 'build', 'index.js');
   assert(existsSync(installedBuild), 'Fresh package install is missing build/index.js.');
+
+  const packagedSearchClient = readInstalledFile(installedPackageRoot, 'build/graphql/client.js');
+  const packagedSearchQuery = readInstalledFile(installedPackageRoot, 'build/graphql/queries.js');
+
+  assert(
+    packagedSearchClient.includes('term: query')
+      && packagedSearchClient.includes('this.executeData(SEARCH_ISSUES_QUERY, variables)'),
+    'Fresh package install must ship the raw issue-search helper that sends the free-text term separately from IssueFilter variables.'
+  );
+  assert(
+    !packagedSearchClient.includes('this.linearClient.searchIssues('),
+    'Fresh package install must not delegate linear_search_issues to the SDK searchIssues path, which can leak the query term into IssueFilter.search.'
+  );
+  assert(
+    packagedSearchQuery.includes('query SearchIssues(')
+      && packagedSearchQuery.includes('term: $term')
+      && packagedSearchQuery.includes('filter: $filter'),
+    'Fresh package install must include the raw SearchIssues GraphQL document with separate term and filter variables.'
+  );
 
   const { tools, stderr } = await listToolsWithAuthEnv(installedBuild);
   const { stderr: apiKeyStderr } = await listToolsWithAuthEnv(installedBuild, {

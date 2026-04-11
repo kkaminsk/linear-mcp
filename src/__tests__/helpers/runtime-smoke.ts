@@ -162,6 +162,7 @@ export function createIssueWorkflowSmokeBackend(): {
   );
 
   const graphQLClient = {
+    createIssue,
     sdk: {
       createIssue,
       createIssueBatch,

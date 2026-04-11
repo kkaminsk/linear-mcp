@@ -78,7 +78,13 @@ export class CommentHandler extends BaseHandler implements CommentHandlerMethods
       const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['issueId']);
 
-      const result = await client.getIssueComments(args) as GetIssueCommentsResponse;
+      const issueReference = typeof client.findIssueByIdentifier === 'function'
+        ? await client.findIssueByIdentifier(args.issueId)
+        : undefined;
+      const result = await client.getIssueComments({
+        ...args,
+        issueId: getString(issueReference, 'id') ?? args.issueId,
+      }) as GetIssueCommentsResponse;
       if (!result.issue) {
         throw new Error(`Issue ${args.issueId} was not found`);
       }

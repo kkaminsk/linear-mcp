@@ -56,6 +56,9 @@ import {
   GetProjectMilestoneResponse
 } from '../features/milestones/types/milestone.types.js';
 import {
+  asRecord,
+  compactObject,
+  getString,
   getBoolean,
 } from '../types/sdk.utils.js';
 
@@ -300,15 +303,19 @@ export class LinearGraphQLClient {
     query: string,
     options: Omit<SearchIssuesInput, 'query'> = {}
   ): Promise<SearchIssuesResponse> {
+    const first = options.first ?? 50;
+    const exactIdentifierFilter = this.buildIssueIdentifierFilter(query, options.filter);
+    const filter = exactIdentifierFilter ?? options.filter;
+
     const { SEARCH_ISSUES_QUERY } = await import('./queries.js');
 
     const variables: Record<string, unknown> = {
       term: query,
-      first: options.first ?? 50,
+      first,
     };
 
-    if (options.filter && Object.keys(options.filter).length > 0) {
-      variables.filter = options.filter;
+    if (filter && Object.keys(filter).length > 0) {
+      variables.filter = filter;
     }
 
     if (options.after !== undefined) {
@@ -321,13 +328,52 @@ export class LinearGraphQLClient {
       nodes: Issue[];
     } }>(SEARCH_ISSUES_QUERY, variables);
 
-    return {
+    const payload = {
       issues: {
         pageInfo: result.searchIssues.pageInfo,
         nodes: result.searchIssues.nodes ?? [],
       },
       totalCount: result.searchIssues.totalCount,
     };
+
+    if (options.after === undefined && payload.issues.nodes.length === 0) {
+      const exactIssue = await this.findIssueByIdentifier(query, options.filter);
+      if (exactIssue) {
+        return {
+          issues: {
+            pageInfo: {
+              hasNextPage: false,
+              endCursor: null,
+            },
+            nodes: first > 0 ? [exactIssue as Issue] : [],
+          },
+          totalCount: 1,
+        };
+      }
+    }
+
+    return payload;
+  }
+
+  async findIssueByIdentifier(
+    identifier: string,
+    extraFilter: Record<string, unknown> = {}
+  ): Promise<unknown | undefined> {
+    const filter = this.buildIssueIdentifierFilter(identifier, extraFilter);
+    if (!filter) {
+      return undefined;
+    }
+
+    const connection = await this.executeSdk(
+      'issues',
+      () => this.sdk.issues({
+        filter,
+        first: 1,
+      })
+    );
+
+    const nodes = asRecord(connection).nodes;
+    return Array.isArray(nodes) ? nodes[0] : undefined;
   }
 
   // Get teams with their states and labels
@@ -402,6 +448,49 @@ export class LinearGraphQLClient {
       filter: options.filter,
       includeArchived: options.includeArchived ?? false,
       orderBy: options.orderBy ?? 'createdAt',
+    });
+  }
+
+  private parseIssueIdentifier(identifier: string): {
+    teamKey: string;
+    issueNumber: number;
+  } | undefined {
+    const match = identifier.trim().match(/^([A-Za-z][A-Za-z0-9]*)-(\d+)$/);
+    if (!match) {
+      return undefined;
+    }
+
+    const issueNumber = Number.parseInt(match[2], 10);
+    if (!Number.isSafeInteger(issueNumber)) {
+      return undefined;
+    }
+
+    return {
+      teamKey: match[1].toUpperCase(),
+      issueNumber,
+    };
+  }
+
+  private buildIssueIdentifierFilter(
+    identifier: string,
+    extraFilter: Record<string, unknown> = {}
+  ): Record<string, unknown> | undefined {
+    const parsed = this.parseIssueIdentifier(identifier);
+    if (!parsed) {
+      return undefined;
+    }
+
+    return compactObject({
+      ...extraFilter,
+      team: {
+        ...asRecord(extraFilter.team),
+        key: {
+          eq: parsed.teamKey,
+        },
+      },
+      number: {
+        eq: parsed.issueNumber,
+      },
     });
   }
 

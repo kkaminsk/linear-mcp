@@ -38,7 +38,14 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
       const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['id']);
 
-      const issue = await client.executeSdk('issue', () => client.sdk.issue(args.id));
+      const issueReference = typeof client.findIssueByIdentifier === 'function'
+        ? await client.findIssueByIdentifier(args.id)
+        : undefined;
+      const issueId = getString(issueReference, 'id') ?? args.id;
+      const issue = await client.executeSdk('issue', () => client.sdk.issue(issueId));
+      if (Object.keys(asRecord(issue)).length === 0) {
+        throw new Error(`Issue ${args.id} was not found`);
+      }
       const issueData = await this.mapIssueDetail(issue);
 
       return this.createStructuredResponse(
@@ -57,10 +64,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
       const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['title', 'teamId']);
 
-      const payload = await client.executeSdk(
-        'createIssue',
-        () => client.sdk.createIssue(args)
-      );
+      const payload = await client.createIssue(args);
 
       const issue = await resolveValue(asRecord(payload).issue as Promise<unknown> | unknown);
       const issueData = await this.mapIssueSummary(issue);
