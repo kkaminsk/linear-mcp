@@ -1,8 +1,15 @@
 {
-  "name": "linear-mcp",
+  "name": "@kkaminsk/linear-mcp",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Model Context Protocol server for Linear",
+  "main": "./build/index.js",
+  "bin": {
+    "linear-mcp": "./build/index.js"
+  },
+  "files": [
+    "build",
+    "README.md"
+  ],
   "type": "module",
   "scripts": {
     "test": "jest",
@@ -11,9 +18,16 @@
     "test:integration": "jest --testPathPattern '\\.integration\\.test\\.ts$'",
     "get-test-tokens": "node --loader ts-node/esm scripts/get-test-tokens.ts",
     "test:oauth": "node --loader ts-node/esm scripts/test-oauth.ts",
-    "build": "tsc && chmod +x build/index.js",
+    "build": "tsc && node -e \"const fs=require('fs');const file='build/index.js';if(fs.existsSync(file)){fs.chmodSync(file,0o755);}\"",
     "start": "node build/index.js",
-    "dev": "nodemon --watch src --ext ts --exec \"npm run build && npm start\""
+    "dev": "nodemon --watch src --ext ts --exec \"npm run build && npm start\"",
+    "verify:linear-api-contracts": "node scripts/verify-linear-api-contracts.mjs",
+    "verify:tool-catalog": "node scripts/verify-tool-catalog.mjs",
+    "verify:issue-workflows": "jest --runTestsByPath src/__tests__/issue-workflow-smoke.test.ts",
+    "verify:package-install": "node scripts/verify-packaged-install.mjs",
+    "verify:release": "npm run build && npm run verify:linear-api-contracts && npm run verify:tool-catalog && npm run verify:issue-workflows && npm run verify:package-install",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run verify:release"
   },
   "keywords": [],
   "author": "",
@@ -34,8 +48,9 @@
   },
   "dependencies": {
     "@graphql-typed-document-node/core": "^3.2.0",
-    "@linear/sdk": "^38.0.0",
+    "@linear/sdk": "^81.0.0",
     "@modelcontextprotocol/sdk": "^1.4.0",
+    "ajv": "^8.18.0",
     "graphql": "^16.10.0",
     "graphql-tag": "^2.12.6"
   },

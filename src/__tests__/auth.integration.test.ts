@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
-import { LinearAuth } from '../auth';
 import { LinearClient } from '@linear/sdk';
+import { LinearAuth } from '../auth.js';
 
 // Skip tests if no credentials are configured
-const hasAPIKeyCredentials = process.env.LINEAR_API_KEY;
+const apiKeyCredential = process.env.LINEAR_API_KEY ?? process.env.LINEAR_ACCESS_TOKEN;
+const hasAPIKeyCredentials = Boolean(apiKeyCredential);
 const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID && 
                           process.env.LINEAR_CLIENT_SECRET && 
                           process.env.LINEAR_REDIRECT_URI;
@@ -19,7 +20,7 @@ const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID &&
       auth = new LinearAuth();
       auth.initialize({
         type: 'api',
-        apiKey: process.env.LINEAR_API_KEY!
+        apiKey: apiKeyCredential!
       });
     });
 
@@ -59,9 +60,11 @@ const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID &&
       expect(url).toContain(`client_id=${process.env.LINEAR_CLIENT_ID}`);
       expect(url).toContain(`redirect_uri=${encodeURIComponent(process.env.LINEAR_REDIRECT_URI!)}`);
       expect(url).toContain('response_type=code');
-      expect(url).toContain('scope=read%2Cwrite%2Cissues%3Acreate%2Coffline_access');
-      expect(url).toContain('actor=application');
+      expect(url).toContain('scope=read%2Cwrite%2Cissues%3Acreate');
+      expect(url).toContain('actor=app');
       expect(url).toContain('state=');
+      expect(url).not.toContain('offline_access');
+      expect(url).not.toContain('access_type=');
     });
 
     // Skip token tests if we don't have auth code and refresh token
@@ -72,7 +75,9 @@ const hasOAuthCredentials = process.env.LINEAR_CLIENT_ID &&
         throw new Error('LINEAR_AUTH_CODE environment variable is required');
       }
 
-      await auth.handleCallback(authCode);
+      auth.getAuthorizationUrl();
+      const state = auth.getPendingOAuthState();
+      await auth.handleCallback(authCode, state!);
       expect(auth.isAuthenticated()).toBe(true);
     });
 

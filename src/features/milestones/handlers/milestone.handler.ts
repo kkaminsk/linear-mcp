@@ -1,7 +1,6 @@
 import { BaseHandler } from '../../../core/handlers/base.handler.js';
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 import { LinearAuth } from '../../../auth.js';
-import { LinearGraphQLClient } from '../../../graphql/client.js';
 import { ProjectMilestone } from '../types/milestone.types.js';
 
 /**
@@ -9,8 +8,8 @@ import { ProjectMilestone } from '../types/milestone.types.js';
  * Manages creating, updating, deleting, and retrieving project milestone information.
  */
 export class MilestoneHandler extends BaseHandler {
-  constructor(auth: LinearAuth, graphqlClient?: LinearGraphQLClient) {
-    super(auth, graphqlClient);
+  constructor(auth: LinearAuth) {
+    super(auth);
   }
 
   /**
@@ -18,7 +17,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleCreateProjectMilestone(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['name', 'projectId']);
 
       const result = await client.createProjectMilestone({
@@ -36,26 +35,15 @@ export class MilestoneHandler extends BaseHandler {
 
       const { projectMilestone } = result.projectMilestoneCreate;
 
-      const response = [
-        `Successfully created project milestone`,
-        `Name: ${projectMilestone.name}`,
-        `Project: ${projectMilestone.project.name}`,
-        `Status: ${projectMilestone.status}`,
-      ];
-
-      if (projectMilestone.description) {
-        response.push(`Description: ${projectMilestone.description}`);
-      }
-
-      if (projectMilestone.targetDate) {
-        response.push(`Target Date: ${projectMilestone.targetDate}`);
-      }
-
-      response.push(`Progress: ${projectMilestone.progress}%`);
-
-      return this.createResponse(response.join('\n'));
+      return this.createStructuredResponse(
+        `Created project milestone ${projectMilestone.name}`,
+        {
+          success: true,
+          projectMilestone,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'create project milestone');
+      return this.handleError(error, 'create project milestone');
     }
   }
 
@@ -64,7 +52,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleUpdateProjectMilestone(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['id']);
 
       const updateInput: any = {};
@@ -82,25 +70,15 @@ export class MilestoneHandler extends BaseHandler {
 
       const { projectMilestone } = result.projectMilestoneUpdate;
 
-      const response = [
-        `Successfully updated project milestone`,
-        `Name: ${projectMilestone.name}`,
-        `Project: ${projectMilestone.project.name}`,
-        `Status: ${projectMilestone.status}`,
-        `Progress: ${projectMilestone.progress}%`,
-      ];
-
-      if (projectMilestone.description) {
-        response.push(`Description: ${projectMilestone.description}`);
-      }
-
-      if (projectMilestone.targetDate) {
-        response.push(`Target Date: ${projectMilestone.targetDate}`);
-      }
-
-      return this.createResponse(response.join('\n'));
+      return this.createStructuredResponse(
+        `Updated project milestone ${projectMilestone.name}`,
+        {
+          success: true,
+          projectMilestone,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'update project milestone');
+      return this.handleError(error, 'update project milestone');
     }
   }
 
@@ -109,7 +87,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleDeleteProjectMilestone(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['id']);
 
       const result = await client.deleteProjectMilestone(args.id);
@@ -118,9 +96,15 @@ export class MilestoneHandler extends BaseHandler {
         throw new Error('Failed to delete project milestone');
       }
 
-      return this.createResponse(`Successfully deleted project milestone with ID: ${args.id}`);
+      return this.createStructuredResponse(
+        `Deleted project milestone ${args.id}`,
+        {
+          success: true,
+          id: args.id,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'delete project milestone');
+      return this.handleError(error, 'delete project milestone');
     }
   }
 
@@ -129,7 +113,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleGetProjectMilestone(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['id']);
 
       const result = await client.getProjectMilestone(args.id);
@@ -142,9 +126,12 @@ export class MilestoneHandler extends BaseHandler {
         }
       };
 
-      return this.createJsonResponse(processedResult);
+      return this.createStructuredResponse(
+        `Fetched project milestone ${result.projectMilestone.name}`,
+        processedResult as Record<string, unknown>
+      );
     } catch (error) {
-      this.handleError(error, 'get project milestone info');
+      return this.handleError(error, 'get project milestone info');
     }
   }
 
@@ -153,7 +140,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleSearchProjectMilestones(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
 
       const filter: any = {};
       
@@ -187,9 +174,12 @@ export class MilestoneHandler extends BaseHandler {
         }
       };
 
-      return this.createJsonResponse(processedResult);
+      return this.createStructuredResponse(
+        `Found ${processedResult.projectMilestones.nodes.length} project milestones`,
+        processedResult as Record<string, unknown>
+      );
     } catch (error) {
-      this.handleError(error, 'search project milestones');
+      return this.handleError(error, 'search project milestones');
     }
   }
 
@@ -198,7 +188,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleGetProjectMilestones(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['projectId']);
 
       const result = await client.searchProjectMilestones({
@@ -221,9 +211,12 @@ export class MilestoneHandler extends BaseHandler {
         }
       };
 
-      return this.createJsonResponse(processedResult);
+      return this.createStructuredResponse(
+        `Fetched ${processedResult.projectMilestones.nodes.length} milestones for project ${args.projectId}`,
+        processedResult as Record<string, unknown>
+      );
     } catch (error) {
-      this.handleError(error, 'get project milestones');
+      return this.handleError(error, 'get project milestones');
     }
   }
 
@@ -232,7 +225,7 @@ export class MilestoneHandler extends BaseHandler {
    */
   async handleCreateProjectMilestones(args: any): Promise<BaseToolResponse> {
     try {
-      const client = this.verifyAuth();
+      const client = await this.verifyAuth();
       this.validateRequiredParams(args, ['projectId', 'milestones']);
 
       if (!Array.isArray(args.milestones) || args.milestones.length === 0) {
@@ -273,29 +266,16 @@ export class MilestoneHandler extends BaseHandler {
         }
       }
 
-      const response = [
-        `Bulk milestone creation completed`,
-        `Successfully created: ${results.length} milestones`,
-        `Errors: ${errors.length}`,
-      ];
-
-      if (results.length > 0) {
-        response.push('\nCreated milestones:');
-        results.forEach(result => {
-          response.push(`- ${result.name} (ID: ${result.id})`);
-        });
-      }
-
-      if (errors.length > 0) {
-        response.push('\nErrors:');
-        errors.forEach(error => {
-          response.push(`- ${error}`);
-        });
-      }
-
-      return this.createResponse(response.join('\n'));
+      return this.createStructuredResponse(
+        `Bulk milestone creation created ${results.length} milestones${errors.length > 0 ? ` with ${errors.length} errors` : ''}`,
+        {
+          success: errors.length === 0,
+          created: results,
+          errors,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'create project milestones');
+      return this.handleError(error, 'create project milestones');
     }
   }
 

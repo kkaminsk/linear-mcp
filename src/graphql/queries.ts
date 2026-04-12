@@ -1,60 +1,54 @@
 import { gql } from 'graphql-tag';
 
-export const SEARCH_ISSUES_QUERY = gql`
-  query SearchIssues(
-    $filter: IssueFilter
-    $first: Int
-    $after: String
-    $orderBy: PaginationOrderBy
-  ) {
-    issues(
-      filter: $filter
-      first: $first
-      after: $after
-      orderBy: $orderBy
-    ) {
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      nodes {
-        id
-        identifier
-        title
-        description
-        url
-        state {
-          id
-          name
-          type
-          color
-        }
-        assignee {
-          id
-          name
-          email
-        }
-        team {
-          id
-          name
-          key
-        },
-        project {
-          id
-          name
-        },
-        priority
-        labels {
-          nodes {
-            id
-            name
-            color
-          }
-        }
-        createdAt
-        updatedAt
-      }
-    }
+const COMMENT_USER_FIELDS = `
+  id
+  name
+  email
+`;
+
+const COMMENT_REFERENCE_FIELDS = `
+  id
+  body
+  url
+  createdAt
+  updatedAt
+  user {
+    ${COMMENT_USER_FIELDS}
+  }
+`;
+
+const COMMENT_FIELDS = `
+  id
+  body
+  bodyData
+  quotedText
+  url
+  archivedAt
+  createdAt
+  updatedAt
+  editedAt
+  resolvedAt
+  issueId
+  parentId
+  resolvingCommentId
+  reactionData
+  user {
+    ${COMMENT_USER_FIELDS}
+  }
+  issue {
+    id
+    identifier
+    title
+    url
+  }
+  parent {
+    ${COMMENT_REFERENCE_FIELDS}
+  }
+  resolvingComment {
+    ${COMMENT_REFERENCE_FIELDS}
+  }
+  resolvingUser {
+    ${COMMENT_USER_FIELDS}
   }
 `;
 
@@ -147,57 +141,118 @@ export const GET_PROJECT_QUERY = gql`
   }
 `;
 
+export const GET_COMMENT_QUERY = gql`
+  query GetComment($id: String!) {
+    comment(id: $id) {
+      ${COMMENT_FIELDS}
+    }
+  }
+`;
+
+export const LIST_COMMENTS_QUERY = gql`
+  query ListComments(
+    $first: Int
+    $after: String
+    $last: Int
+    $before: String
+    $filter: CommentFilter
+    $includeArchived: Boolean
+    $orderBy: PaginationOrderBy
+  ) {
+    comments(
+      first: $first
+      after: $after
+      last: $last
+      before: $before
+      filter: $filter
+      includeArchived: $includeArchived
+      orderBy: $orderBy
+    ) {
+      pageInfo {
+        hasNextPage
+        endCursor
+        hasPreviousPage
+        startCursor
+      }
+      nodes {
+        ${COMMENT_FIELDS}
+      }
+    }
+  }
+`;
+
 export const GET_ISSUE_COMMENTS_QUERY = gql`
   query GetIssueComments(
     $issueId: String!
     $first: Int
     $after: String
+    $last: Int
+    $before: String
+    $filter: CommentFilter
     $includeArchived: Boolean
+    $orderBy: PaginationOrderBy
   ) {
     issue(id: $issueId) {
       id
+      identifier
       title
+      url
       comments(
         first: $first
         after: $after
+        last: $last
+        before: $before
+        filter: $filter
         includeArchived: $includeArchived
-        orderBy: createdAt
+        orderBy: $orderBy
       ) {
         pageInfo {
           hasNextPage
           endCursor
+          hasPreviousPage
+          startCursor
         }
         nodes {
-          id
-          body
-          bodyData
-          user {
-            id
-            name
-            email
-          }
-          parent {
-            id
-            body
-            user {
-              id
-              name
-            }
-          }
-          children(first: 10) {
-            nodes {
-              id
-              body
-              user {
-                id
-                name
-              }
-              createdAt
-            }
-          }
-          createdAt
-          updatedAt
+          ${COMMENT_FIELDS}
         }
+      }
+    }
+  }
+`;
+
+export const SEARCH_ISSUES_QUERY = gql`
+  query SearchIssues(
+    $term: String!
+    $filter: IssueFilter
+    $first: Int
+    $after: String
+    $includeArchived: Boolean
+    $orderBy: PaginationOrderBy
+  ) {
+    searchIssues(
+      term: $term
+      filter: $filter
+      first: $first
+      after: $after
+      includeArchived: $includeArchived
+      orderBy: $orderBy
+    ) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        identifier
+        title
+        description
+        url
+        priority
+        estimate
+        dueDate
+        createdAt
+        updatedAt
       }
     }
   }

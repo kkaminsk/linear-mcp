@@ -1,29 +1,67 @@
 import { gql } from 'graphql-tag';
 
-export const CREATE_ISSUE_MUTATION = gql`
-  mutation CreateIssue($input: IssueCreateInput!) {
-    issueCreate(input: $input) {
-      success
-      issue {
-        id
-        identifier
-        title
-        url
-        team {
-          id
-          name
-        }
-        project {
-          id
-          name
-        }
-      }
-    }
+const COMMENT_USER_FIELDS = `
+  id
+  name
+  email
+`;
+
+const COMMENT_REFERENCE_FIELDS = `
+  id
+  body
+  url
+  createdAt
+  updatedAt
+  user {
+    ${COMMENT_USER_FIELDS}
   }
 `;
 
-export const CREATE_ISSUES_MUTATION = gql`
-  mutation CreateIssues($input: [IssueCreateInput!]!) {
+const COMMENT_FIELDS = `
+  id
+  body
+  bodyData
+  quotedText
+  url
+  archivedAt
+  createdAt
+  updatedAt
+  editedAt
+  resolvedAt
+  issueId
+  parentId
+  resolvingCommentId
+  reactionData
+  user {
+    ${COMMENT_USER_FIELDS}
+  }
+  issue {
+    id
+    identifier
+    title
+    url
+  }
+  parent {
+    ${COMMENT_REFERENCE_FIELDS}
+  }
+  resolvingComment {
+    ${COMMENT_REFERENCE_FIELDS}
+  }
+  resolvingUser {
+    ${COMMENT_USER_FIELDS}
+  }
+`;
+
+const COMMENT_MUTATION_PAYLOAD_FIELDS = `
+  success
+  comment {
+    ${COMMENT_FIELDS}
+  }
+  lastSyncId
+`;
+
+export const CREATE_ISSUE_MUTATION = gql`
+  mutation CreateIssue($input: IssueCreateInput!) {
     issueCreate(input: $input) {
       success
       issue {
@@ -139,31 +177,41 @@ export const CREATE_ISSUE_LABELS = gql`
 export const CREATE_COMMENT_MUTATION = gql`
   mutation CreateComment($input: CommentCreateInput!) {
     commentCreate(input: $input) {
+      ${COMMENT_MUTATION_PAYLOAD_FIELDS}
+    }
+  }
+`;
+
+export const UPDATE_COMMENT_MUTATION = gql`
+  mutation UpdateComment($id: String!, $input: CommentUpdateInput!) {
+    commentUpdate(id: $id, input: $input) {
+      ${COMMENT_MUTATION_PAYLOAD_FIELDS}
+    }
+  }
+`;
+
+export const DELETE_COMMENT_MUTATION = gql`
+  mutation DeleteComment($id: String!) {
+    commentDelete(id: $id) {
       success
-      comment {
-        id
-        body
-        user {
-          id
-          name
-          email
-        }
-        issue {
-          id
-          title
-        }
-        parent {
-          id
-          body
-          user {
-            id
-            name
-          }
-        }
-        createdAt
-        updatedAt
-      }
+      entityId
       lastSyncId
+    }
+  }
+`;
+
+export const RESOLVE_COMMENT_MUTATION = gql`
+  mutation ResolveComment($id: String!, $resolvingCommentId: String) {
+    commentResolve(id: $id, resolvingCommentId: $resolvingCommentId) {
+      ${COMMENT_MUTATION_PAYLOAD_FIELDS}
+    }
+  }
+`;
+
+export const UNRESOLVE_COMMENT_MUTATION = gql`
+  mutation UnresolveComment($id: String!) {
+    commentUnresolve(id: $id) {
+      ${COMMENT_MUTATION_PAYLOAD_FIELDS}
     }
   }
 `;

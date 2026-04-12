@@ -1,15 +1,14 @@
 import { BaseHandler } from '../../../core/handlers/base.handler.js';
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
 import { LinearAuth } from '../../../auth.js';
-import { LinearGraphQLClient } from '../../../graphql/client.js';
 
 /**
  * Handler for authentication-related operations.
  * Manages both OAuth and API Key authentication flows.
  */
 export class AuthHandler extends BaseHandler {
-  constructor(auth: LinearAuth, graphqlClient?: LinearGraphQLClient) {
-    super(auth, graphqlClient);
+  constructor(auth: LinearAuth) {
+    super(auth);
   }
 
   /**
@@ -28,11 +27,17 @@ export class AuthHandler extends BaseHandler {
 
       const authUrl = this.auth.getAuthorizationUrl();
 
-      return this.createResponse(
-        `Please visit the following URL to authorize the application:\n${authUrl}`
+      return this.createStructuredResponse(
+        'Generated Linear OAuth authorization URL',
+        {
+          authorizationUrl: authUrl,
+          state: this.auth.getPendingOAuthState() ?? null,
+          actor: 'app',
+          nextStep: 'Open authorizationUrl, authorize the app, then call linear_auth_callback with both the returned code and this exact state. The state is single-use.',
+        }
       );
     } catch (error) {
-      this.handleError(error, 'initialize authentication');
+      return this.handleError(error, 'initialize authentication');
     }
   }
 
@@ -41,13 +46,18 @@ export class AuthHandler extends BaseHandler {
    */
   async handleAuthCallback(args: any): Promise<BaseToolResponse> {
     try {
-      this.validateRequiredParams(args, ['code']);
+      this.validateRequiredParams(args, ['code', 'state']);
 
-      await this.auth.handleCallback(args.code);
+      await this.auth.handleCallback(args.code, args.state);
 
-      return this.createResponse('Successfully authenticated with Linear');
+      return this.createStructuredResponse(
+        'Successfully authenticated with Linear',
+        {
+          authenticated: true,
+        }
+      );
     } catch (error) {
-      this.handleError(error, 'handle authentication callback');
+      return this.handleError(error, 'handle authentication callback');
     }
   }
 }

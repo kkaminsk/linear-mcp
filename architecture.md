@@ -1,321 +1,132 @@
 # Linear MCP Architecture
 
-This document outlines the architecture of the Linear MCP (Model Context Protocol) implementation.
-
 ## Overview
 
-The Linear MCP provides a type-safe, modular interface to the Linear API. It abstracts away the complexity of GraphQL operations while providing a clean, domain-driven API surface through MCP tools.
+The server defaults to stdio and can optionally expose MCP streamable HTTP with a domain-driven handler layer on top of Linear's API. It uses a hybrid integration model:
 
-## Core Concepts
+- raw GraphQL for legacy operations that still rely on explicit documents,
+- current `@linear/sdk` methods for newer capability areas,
+- structured MCP responses for both reads and mutations.
 
-### Domain-Driven Design
+## Repository layout
 
-The codebase is organized around business domains:
-- Authentication
-- Issues
-- Projects
-- Teams
-- Users
-
-Each domain has its own set of:
-- Handlers (for MCP tool operations)
-- Types
-- Tests
-
-### Layered Architecture
-
-The codebase follows a layered architecture pattern:
-
-```
+```text
 src/
-├── core/               # Core infrastructure
-│   ├── handlers/      # Base handler and factory
+├── index.ts
+├── auth.ts
+├── graphql/
+│   └── client.ts
+├── core/
+│   ├── capabilities.ts
+│   ├── handlers/
 │   │   ├── base.handler.ts
 │   │   └── handler.factory.ts
-│   ├── types/         # Shared type definitions
-│   │   ├── tool.types.ts     # MCP tool schemas
-│   │   └── common.types.ts
-│   └── interfaces/    # Core interfaces
-│       └── tool-handler.interface.ts
-│
-├── features/          # Feature modules by domain
-│   ├── auth/         # Authentication
-│   │   └── handlers/
-│   ├── issues/       # Issue management
-│   │   └── handlers/
-│   ├── projects/     # Project operations
-│   │   └── handlers/
-│   ├── teams/        # Team operations
-│   │   └── handlers/
-│   └── users/        # User operations
-│       └── handlers/
-│
-├── infrastructure/    # Infrastructure concerns
-│   ├── graphql/      # GraphQL implementation
-│   │   ├── operations/   # GraphQL operations by domain
-│   │   └── fragments/    # Shared GraphQL fragments
-│   └── http/         # HTTP client
-│
-└── utils/            # Shared utilities
-    ├── logger.ts     # Logging system
-    └── config.ts     # Configuration management
+│   ├── interfaces/
+│   └── types/
+│       └── tool.types.ts
+├── features/
+│   ├── auth/
+│   ├── issues/
+│   ├── projects/
+│   ├── comments/
+│   ├── milestones/
+│   ├── teams/
+│   ├── users/
+│   ├── cycles/
+│   ├── attachments/
+│   ├── webhooks/
+│   ├── portfolio/
+│   ├── agents/
+│   └── subscriptions/
+└── types/
+    └── sdk.utils.ts
 ```
 
-## Key Components
+## Request flow
 
-### Handler Architecture
+1. `index.ts` accepts MCP `ListTools` and `CallTool` requests.
+2. `tool.types.ts` provides strict JSON Schema input contracts.
+3. `handler.factory.ts` maps tool names to feature handlers.
+4. Feature handlers extend `BaseHandler` for validation, auth checks, structured success responses, and structured errors.
+5. `auth.ts` resolves the active Linear client lazily so auth changes are visible to every handler.
 
-The handler system provides a clean separation of concerns for MCP tool operations:
+## Authentication model
 
-```typescript
-// Base handler with shared functionality
-abstract class BaseHandler {
-  protected verifyAuth(): LinearGraphQLClient;
-  protected createResponse(text: string): BaseToolResponse;
-  protected createJsonResponse(data: unknown): BaseToolResponse;
-  protected handleError(error: unknown, operation: string): never;
-  protected validateRequiredParams(params: Record<string, unknown>, required: string[]): void;
-}
+`LinearAuth` supports:
 
-// Feature-specific handlers extend the base
-class IssueHandler extends BaseHandler {
-  handleCreateIssue(args: any): Promise<BaseToolResponse>;
-  handleSearchIssues(args: any): Promise<BaseToolResponse>;
-  // ... other issue operations
-}
+- API key authentication from `LINEAR_API_KEY` or `LINEAR_ACCESS_TOKEN` (with `LINEAR_API_KEY` taking precedence when both are set)
+- OAuth authorization URL generation with Linear-supported parameters
+- single-use callback state validation
+- awaited token refresh
+- late-bound client access through `ensureAuthenticatedClient()` and `getGraphQLClient()`
 
-// Factory for managing handlers
-class HandlerFactory {
-  private authHandler: AuthHandler;
-  private issueHandler: IssueHandler;
-  // ... other handlers
+OAuth authorization requests use `actor=app` and require the freshly issued `state` on callback.
 
-  getHandlerForTool(toolName: string): { handler: BaseHandler; method: string };
-}
+## GraphQL and SDK layer
+
+`src/graphql/client.ts` is the shared execution boundary.
+
+It provides:
+
+- raw GraphQL execution with preserved status, headers, GraphQL errors, and extensions
+- `executeSdk()` for SDK calls that should share the same structured error behavior
+- `LinearGraphQLRequestError` for surfacing GraphQL metadata at the MCP boundary
+
+## Response contract
+
+Handlers return MCP-compatible results shaped around:
+
+- human-readable text summaries in `content`
+- machine-readable payloads in `structuredContent`
+- `isError: true` for tool-visible failures
+
+Error responses distinguish:
+
+- GraphQL failures
+- auth failures
+- permission failures
+- MCP validation failures
+- capability limitations
+
+## Runtime capability gating
+
+`src/core/capabilities.ts` describes runtime support, endpoint metadata, and subscription behavior.
+
+- On stdio, subscription tools are not advertised in the tool list.
+- On stdio, no remote endpoint is exposed.
+- On stream transport, capability metadata includes the active streamable HTTP endpoint.
+- If a client still invokes a subscription tool directly, the server returns a structured capability error.
+- `linear_get_capabilities` exposes the active runtime and feature availability.
+
+This keeps advanced surfaces explicit without pretending that stdio can sustain streaming semantics it does not support or that `/sse` exists when the runtime is configured for streamable HTTP at `/mcp`.
+
+## Domain boundaries
+
+- **Issues** own detailed issue reads, hierarchy via `parentId`, planning-field mutations, search/list semantics, and general relations.
+- **Projects** own standalone lifecycle, shared read shape, project updates, and initiative association.
+- **Teams / Users** own discovery surfaces.
+- **Cycles / Labels / Workflow states** expose workflow primitives needed by issue automation.
+- **Portfolio** owns initiative and customer lifecycle, while project handlers surface initiative linkage in project-oriented reads and mutations.
+- **Attachments / Webhooks / Agents** keep integration-focused behavior out of the issue and project handlers.
+
+## Testing strategy
+
+The test suite mixes:
+
+- unit tests for auth and GraphQL client behavior,
+- contract tests for tool schemas and capability gating,
+- handler tests for hierarchy, project assignment, and initiative association semantics,
+- runtime transport tests for streamable HTTP interoperability,
+- optional integration tests for live Linear credentials.
+
+Release verification also includes built-artifact checks:
+
+- `npm run verify:tool-catalog` validates the built server's advertised tool surface,
+- `npm run verify:package-install` smoke-tests a fresh packaged install before publishing.
+
+The expected local verification path is:
+
+```bash
+npm run build
+npm test
 ```
-
-### Authentication Layer
-
-The authentication system supports both API Key and OAuth flows:
-
-```typescript
-class AuthHandler extends BaseHandler {
-  handleAuth(args: any): Promise<BaseToolResponse>;
-  handleAuthCallback(args: any): Promise<BaseToolResponse>;
-}
-
-interface AuthConfig {
-  type: 'apikey' | 'oauth';
-  accessToken?: string;
-  clientId?: string;
-  clientSecret?: string;
-  redirectUri?: string;
-}
-```
-
-### GraphQL Layer
-
-The GraphQL layer provides domain-specific operations with atomic and composite patterns:
-
-```typescript
-class LinearGraphQLClient {
-  // Execute GraphQL operations
-  async execute<T>(document: DocumentNode, variables?: any): Promise<T>;
-  
-  // Atomic operations
-  async createProject(input: ProjectInput): Promise<ProjectResponse>;
-  async createBatchIssues(issues: CreateIssueInput[]): Promise<IssueBatchResponse>;
-  
-  // Composite operations (built from atomic operations)
-  async createProjectWithIssues(
-    projectInput: ProjectInput, 
-    issues: CreateIssueInput[]
-  ): Promise<ProjectResponse> {
-    // Creates project first, then creates issues with project reference
-    const project = await this.createProject(projectInput);
-    const issuesWithProject = issues.map(issue => ({
-      ...issue,
-      projectId: project.projectCreate.project.id
-    }));
-    const batchResult = await this.createBatchIssues(issuesWithProject);
-    return { projectCreate: project.projectCreate, issueBatchCreate: batchResult.issueBatchCreate };
-  }
-}
-```
-
-This pattern ensures:
-- Clear separation between atomic and composite operations
-- Type safety through the entire operation chain
-- Proper error handling at each step
-- Reusable atomic operations
-
-### Error Handling
-
-Errors are handled consistently through the MCP error system:
-
-```typescript
-interface BaseToolResponse {
-  content: Array<{
-    type: string;
-    text: string;
-  }>;
-}
-
-interface ErrorToolResponse extends BaseToolResponse {
-  isError: true;
-}
-```
-
-## Best Practices
-
-1. **Handler Organization**
-   - Each domain has its own handler
-   - Handlers extend BaseHandler
-   - Keep handler methods focused and single-purpose
-
-2. **Type Safety**
-   - Define tool schemas in tool.types.ts
-   - Use interfaces for handler methods
-   - Minimize use of 'any' type
-
-3. **Error Handling**
-   - Use BaseHandler error methods
-   - Provide clear error messages
-   - Include operation context in errors
-
-4. **Testing**
-   - Test each handler independently
-   - Use integration tests for full flows
-   - Mock GraphQL responses
-
-## Planned Improvements
-
-### Type Safety & Validation
-- Replace all 'any' types with proper interfaces
-- Generate types from GraphQL schema
-- Add runtime type checking
-- Implement JSON schema validation for inputs
-- Improve error messages for validation failures
-
-### Performance Optimizations
-- Implement true batch mutations for bulk operations
-- Pre-import and cache GraphQL operations
-- Add query batching for related operations
-- Implement proper error handling for GraphQL errors
-- Move to GraphQL code generation
-- Add operation validation
-
-### Handler Enhancements
-- Add comprehensive input validation
-- Implement response caching with invalidation
-- Add retry logic with backoff strategy
-- Add handler lifecycle hooks
-- Improve error context and debugging
-
-### OAuth Implementation
-- Complete OAuth flow with proper state management
-- Add token refresh with automatic retry
-- Implement secure token storage
-- Add proper error handling for OAuth flows
-- Support multiple OAuth scopes
-
-### GraphQL Operations
-- Implement true batching for bulk operations
-- Move to code generation for type safety
-- Add operation validation and optimization
-- Implement proper error handling
-- Add query complexity analysis
-
-### Authentication Refactoring
-- Split authentication into separate implementations:
-  ```typescript
-  interface ILinearAuth {
-    initialize(config: AuthConfig): void;
-    isAuthenticated(): boolean;
-    getClient(): LinearClient;
-  }
-
-  class OAuthLinearAuth implements ILinearAuth {
-    // OAuth-specific implementation
-  }
-
-  class APILinearAuth implements ILinearAuth {
-    // API-specific implementation
-  }
-  ```
-
-### Caching Layer
-- Implement caching for frequently accessed data:
-  ```typescript
-  interface CacheConfig {
-    ttl: number;
-    maxSize: number;
-  }
-
-  class CacheManager {
-    private cache: Map<string, CacheEntry>;
-    
-    get<T>(key: string): T | undefined;
-    set<T>(key: string, value: T, ttl?: number): void;
-    invalidate(pattern: string): void;
-  }
-  ```
-
-### Rate Limiting
-- Add rate limiting middleware:
-  ```typescript
-  class RateLimiter {
-    private readonly limits: Map<string, number>;
-    private readonly windowMs: number;
-
-    async checkLimit(operation: string): Promise<boolean>;
-    async waitForAvailability(operation: string): Promise<void>;
-  }
-  ```
-
-### Error Handling
-- Implement domain-specific error types:
-  ```typescript
-  class LinearApiError extends Error {
-    constructor(
-      public code: string,
-      public operation: string,
-      message: string
-    ) {
-      super(message);
-    }
-  }
-  ```
-
-## Contributing
-
-When contributing to this codebase:
-
-1. Follow the handler pattern
-2. Maintain domain separation
-3. Add tests for new handlers
-4. Update tool schemas
-5. Keep handlers focused
-6. Document new tools
-
-## File Organization
-
-Keep related code together:
-
-```
-features/issues/
-├── handlers/          # Issue-related handlers
-│   └── issue.handler.ts
-├── types/            # Issue-specific types
-│   └── issue.types.ts
-└── __tests__/        # Tests
-    ├── issue.test.ts
-    └── issue.integration.test.ts
-```
-
-## Dependency Management
-
-- Keep dependencies minimal
-- Use peer dependencies where appropriate
-- Lock dependency versions
-- Document breaking changes
