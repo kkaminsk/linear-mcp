@@ -61,6 +61,14 @@ import {
   getString,
   getBoolean,
 } from '../types/sdk.utils.js';
+import {
+  DEFAULT_LINEAR_REQUEST_TIMEOUT_MS,
+  DEFAULT_SAFE_READ_MAX_ATTEMPTS,
+  DEFAULT_SAFE_READ_RETRY_DELAY_MS,
+  executeWithRequestPolicy,
+  RequestPolicyOptions,
+  RequestTimeoutError,
+} from '../core/request-policy.js';
 
 export interface GraphQLErrorDetail {
   message: string;
@@ -89,6 +97,49 @@ interface RawGraphQLResponse<T> {
   status?: number;
 }
 
+interface GraphQLExecutionOptions {
+  allowRetry?: boolean;
+}
+
+export interface LinearGraphQLClientOptions {
+  requestTimeoutMs?: number;
+  safeReadMaxAttempts?: number;
+  safeReadRetryDelayMs?: number;
+}
+
+const SAFE_SDK_READ_OPERATIONS = new Set<string>([
+  'agentActivities',
+  'agentActivity',
+  'agentSession',
+  'agentSessions',
+  'attachment',
+  'attachments',
+  'customer',
+  'customers',
+  'cycle',
+  'cycles',
+  'initiative',
+  'initiatives',
+  'issue',
+  'issue.attachments',
+  'issueLabels',
+  'issues',
+  'project',
+  'projects',
+  'searchProjects',
+  'team',
+  'team.labels',
+  'team.states',
+  'team.webhooks',
+  'teams',
+  'user',
+  'users',
+  'viewer',
+  'webhook',
+  'webhooks',
+  'workflowStates',
+]);
+
 export class LinearGraphQLRequestError extends Error {
   constructor(
     public readonly operation: string,
@@ -103,7 +154,10 @@ export class LinearGraphQLRequestError extends Error {
 export class LinearGraphQLClient {
   private linearClient: LinearClient;
 
-  constructor(linearClient: LinearClient) {
+  constructor(
+    linearClient: LinearClient,
+    private readonly options: LinearGraphQLClientOptions = {}
+  ) {
     this.linearClient = linearClient;
   }
 
@@ -113,37 +167,44 @@ export class LinearGraphQLClient {
 
   async execute<T, V extends Record<string, unknown> = Record<string, unknown>>(
     document: DocumentNode,
-    variables?: V
+    variables?: V,
+    options: GraphQLExecutionOptions = {}
   ): Promise<GraphQLResult<T>> {
     const graphQLClient = this.linearClient.client;
     const operationName = this.getOperationName(document);
 
     try {
-      const response = await graphQLClient.rawRequest(
-        document.loc?.source.body || '',
-        variables
-      ) as unknown as RawGraphQLResponse<T>;
+      return await executeWithRequestPolicy(
+        operationName,
+        async () => {
+          const response = await graphQLClient.rawRequest(
+            document.loc?.source.body || '',
+            variables
+          ) as unknown as RawGraphQLResponse<T>;
 
-      const result: GraphQLResult<T> = {
-        data: response.data,
-        errors: this.normalizeErrors(response.errors),
-        extensions: this.normalizeExtensions(response.extensions),
-        meta: {
-          status: response.status,
-          retryable: this.isRetryable(response.status, this.normalizeErrors(response.errors)),
-          headers: this.normalizeHeaders(response.headers),
+          const result: GraphQLResult<T> = {
+            data: response.data,
+            errors: this.normalizeErrors(response.errors),
+            extensions: this.normalizeExtensions(response.extensions),
+            meta: {
+              status: response.status,
+              retryable: this.isRetryable(response.status, this.normalizeErrors(response.errors)),
+              headers: this.normalizeHeaders(response.headers),
+            },
+          };
+
+          if (!result.data && (result.errors?.length ?? 0) > 0) {
+            throw new LinearGraphQLRequestError(
+              operationName,
+              result,
+              this.buildErrorMessage(operationName, result.errors)
+            );
+          }
+
+          return result;
         },
-      };
-
-      if (!result.data && (result.errors?.length ?? 0) > 0) {
-        throw new LinearGraphQLRequestError(
-          operationName,
-          result,
-          this.buildErrorMessage(operationName, result.errors)
-        );
-      }
-
-      return result;
+        this.buildRequestPolicy(operationName, options.allowRetry === true)
+      );
     } catch (error) {
       if (error instanceof LinearGraphQLRequestError) {
         throw error;
@@ -160,9 +221,10 @@ export class LinearGraphQLClient {
 
   async executeData<T, V extends Record<string, unknown> = Record<string, unknown>>(
     document: DocumentNode,
-    variables?: V
+    variables?: V,
+    options: GraphQLExecutionOptions = {}
   ): Promise<T> {
-    const result = await this.execute<T, V>(document, variables);
+    const result = await this.execute<T, V>(document, variables, options);
     if (result.data === undefined) {
       throw new LinearGraphQLRequestError(
         this.getOperationName(document),
@@ -176,11 +238,22 @@ export class LinearGraphQLClient {
 
   async executeSdk<T>(
     operationName: string,
-    request: () => Promise<T>
+    request: () => Promise<T>,
+    options: GraphQLExecutionOptions = {}
   ): Promise<T> {
+    const allowRetry = options.allowRetry ?? SAFE_SDK_READ_OPERATIONS.has(operationName);
+
     try {
-      return await request();
+      return await executeWithRequestPolicy(
+        operationName,
+        async () => request(),
+        this.buildRequestPolicy(operationName, allowRetry)
+      );
     } catch (error) {
+      if (error instanceof LinearGraphQLRequestError) {
+        throw error;
+      }
+
       const result = this.createErrorResult(operationName, error);
       throw new LinearGraphQLRequestError(
         operationName,
@@ -326,7 +399,7 @@ export class LinearGraphQLClient {
       totalCount?: number;
       pageInfo: { hasNextPage: boolean; endCursor: string | null };
       nodes: Issue[];
-    } }>(SEARCH_ISSUES_QUERY, variables);
+    } }>(SEARCH_ISSUES_QUERY, variables, { allowRetry: true });
 
     const payload = {
       issues: {
@@ -379,25 +452,25 @@ export class LinearGraphQLClient {
   // Get teams with their states and labels
   async getTeams(): Promise<TeamResponse> {
     const { GET_TEAMS_QUERY } = await import('./queries.js');
-    return this.executeData<TeamResponse>(GET_TEAMS_QUERY);
+    return this.executeData<TeamResponse>(GET_TEAMS_QUERY, undefined, { allowRetry: true });
   }
 
   // Get current user info
   async getCurrentUser(): Promise<UserResponse> {
     const { GET_USER_QUERY } = await import('./queries.js');
-    return this.executeData<UserResponse>(GET_USER_QUERY);
+    return this.executeData<UserResponse>(GET_USER_QUERY, undefined, { allowRetry: true });
   }
 
   // Get project info with documentContent support
   async getProject(id: string): Promise<GetProjectResponse> {
     const { GET_PROJECT_QUERY } = await import('./queries.js');
-    return this.executeData<GetProjectResponse>(GET_PROJECT_QUERY, { id });
+    return this.executeData<GetProjectResponse>(GET_PROJECT_QUERY, { id }, { allowRetry: true });
   }
 
   // Search projects with documentContent support
   async searchProjects(filter: { name?: { eq: string } }): Promise<SearchProjectsResponse> {
     const { SEARCH_PROJECTS_QUERY } = await import('./queries.js');
-    return this.executeData<SearchProjectsResponse>(SEARCH_PROJECTS_QUERY, { filter });
+    return this.executeData<SearchProjectsResponse>(SEARCH_PROJECTS_QUERY, { filter }, { allowRetry: true });
   }
 
   // Delete a single issue
@@ -416,7 +489,7 @@ export class LinearGraphQLClient {
 
   async getComment({ id }: GetCommentInput): Promise<GetCommentResponse> {
     const { GET_COMMENT_QUERY } = await import('./queries.js');
-    return this.executeData<GetCommentResponse>(GET_COMMENT_QUERY, { id });
+    return this.executeData<GetCommentResponse>(GET_COMMENT_QUERY, { id }, { allowRetry: true });
   }
 
   async listComments(options: ListCommentsInput = {}): Promise<ListCommentsResponse> {
@@ -431,7 +504,7 @@ export class LinearGraphQLClient {
       filter: options.filter,
       includeArchived: options.includeArchived ?? false,
       orderBy: options.orderBy ?? 'createdAt',
-    });
+    }, { allowRetry: true });
   }
 
   // Get comments for an issue
@@ -448,7 +521,7 @@ export class LinearGraphQLClient {
       filter: options.filter,
       includeArchived: options.includeArchived ?? false,
       orderBy: options.orderBy ?? 'createdAt',
-    });
+    }, { allowRetry: true });
   }
 
   private parseIssueIdentifier(identifier: string): {
@@ -552,7 +625,7 @@ export class LinearGraphQLClient {
   // Get a specific project milestone
   async getProjectMilestone(id: string): Promise<GetProjectMilestoneResponse> {
     const { GET_PROJECT_MILESTONE_QUERY } = await import('./queries.js');
-    return this.executeData<GetProjectMilestoneResponse>(GET_PROJECT_MILESTONE_QUERY, { id });
+    return this.executeData<GetProjectMilestoneResponse>(GET_PROJECT_MILESTONE_QUERY, { id }, { allowRetry: true });
   }
 
   // Search project milestones with filtering and pagination
@@ -568,7 +641,7 @@ export class LinearGraphQLClient {
       first: options.first || 50,
       after: options.after,
       orderBy: options.orderBy || 'updatedAt'
-    });
+    }, { allowRetry: true });
   }
 
   private getOperationName(document: DocumentNode): string {
@@ -611,6 +684,24 @@ export class LinearGraphQLClient {
     operationName: string,
     error: unknown
   ): GraphQLResult<unknown> {
+    if (error instanceof RequestTimeoutError) {
+      return {
+        errors: [
+          {
+            message: error.message,
+            extensions: {
+              code: 'TIMEOUT',
+            },
+          },
+        ],
+        meta: {
+          status: 408,
+          retryable: true,
+          headers: {},
+        },
+      };
+    }
+
     const response = this.extractRawResponse(error);
     return {
       data: response.data,
@@ -706,6 +797,33 @@ export class LinearGraphQLClient {
     return firstMessage
       ? `GraphQL operation ${operationName} failed: ${firstMessage}`
       : `GraphQL operation ${operationName} failed`;
+  }
+
+  private buildRequestPolicy(
+    operationName: string,
+    allowRetry: boolean
+  ): RequestPolicyOptions {
+    return {
+      timeoutMs: this.options.requestTimeoutMs ?? DEFAULT_LINEAR_REQUEST_TIMEOUT_MS,
+      maxAttempts: allowRetry
+        ? Math.max(this.options.safeReadMaxAttempts ?? DEFAULT_SAFE_READ_MAX_ATTEMPTS, 1)
+        : 1,
+      retryDelayMs: allowRetry
+        ? Math.max(this.options.safeReadRetryDelayMs ?? DEFAULT_SAFE_READ_RETRY_DELAY_MS, 0)
+        : 0,
+      shouldRetry: error => allowRetry && this.isRetryableError(operationName, error),
+    };
+  }
+
+  private isRetryableError(
+    operationName: string,
+    error: unknown
+  ): boolean {
+    if (error instanceof LinearGraphQLRequestError) {
+      return error.result.meta.retryable;
+    }
+
+    return this.createErrorResult(operationName, error).meta.retryable;
   }
 
   private async compensateProjectIssueFailure(

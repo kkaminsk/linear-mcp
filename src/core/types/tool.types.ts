@@ -980,6 +980,10 @@ const baseToolSchemas: Record<string, ToolSchema> = {
     'linear_get_capabilities',
     'Report runtime capabilities, server build provenance, and advanced feature availability'
   ),
+  linear_get_runtime_diagnostics: tool(
+    'linear_get_runtime_diagnostics',
+    'Report live runtime diagnostics, low-cardinality request counters, and active session state'
+  ),
   linear_get_comment: tool(
     'linear_get_comment',
     'Get a single comment by ID',

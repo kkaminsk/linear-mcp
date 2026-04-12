@@ -9,7 +9,10 @@ An MCP server for Linear built in TypeScript. It exposes a structured tool surfa
 - Advertised tool schemas are enforced at runtime before handler dispatch, so malformed tool payloads fail with structured validation errors at the MCP boundary.
 - Advertised tool schemas avoid top-level `oneOf`/`allOf`/`anyOf` combinators so Claude-compatible MCP clients can ingest the full tool catalog.
 - `linear_get_capabilities` reports transport details together with server build provenance so clients can confirm the packaged runtime name/version they are connected to.
+- Each MCP tool request emits structured stderr telemetry with tool name, transport, duration, and sanitized failure metadata for troubleshooting.
+- `linear_get_runtime_diagnostics` reports live low-cardinality request counters, recent failure context, and active stream session state without exposing secrets.
 - `linear_search_issues` is the query-backed issue search path. The built server advertises a required `query` string and keeps the free-text query separate from optional list-style filters.
+- OAuth token exchange and the shared Linear request boundary enforce explicit time budgets. Approved safe reads use bounded retry/backoff on retryable failures, while non-idempotent writes stay single-attempt by default.
 - Release validation is gated by `npm run verify:release`, which rebuilds the server, audits guarded Linear issue contracts, checks the built tool catalog, runs critical issue workflow smoke tests, and smoke-tests a fresh packaged install.
 
 ## What it supports
@@ -33,6 +36,7 @@ An MCP server for Linear built in TypeScript. It exposes a structured tool surfa
 - Portfolio entities: initiatives and customers
 - Agents: agent sessions and agent activities
 - Capabilities: runtime capability discovery
+- Runtime diagnostics: live troubleshooting counters and session state through `linear_get_runtime_diagnostics`
 
 ### Runtime-aware behavior
 - Subscription tools are only advertised when the runtime reports streaming transport support.
@@ -40,6 +44,7 @@ An MCP server for Linear built in TypeScript. It exposes a structured tool surfa
 - The default runtime is stdio. Set `LINEAR_MCP_TRANSPORT=stream` to expose a remote MCP streamable HTTP endpoint instead.
 - Stream mode uses MCP streamable HTTP at `LINEAR_MCP_PATH` (default `/mcp`). The server does **not** expose a legacy `/sse` endpoint.
 - `linear_get_capabilities` reports `authScope` as `server` for stdio and `session` for stream transport.
+- Structured per-tool telemetry is emitted to stderr so stdio protocol traffic on stdout stays untouched.
 
 ## Authentication
 
@@ -225,6 +230,7 @@ Example project update:
 
 ## Marketplace and packaged installs
 
+- The application is published to npm as `@kkaminsk/linear-mcp`.
 - The published package exposes the `linear-mcp` executable from `build/index.js`.
 - Release verification uses:
 
@@ -236,9 +242,13 @@ npm run verify:package-install
 ### Troubleshooting
 
 - Run `linear_get_capabilities` to confirm the runtime is reporting the expected packaged server name/version before debugging tool behavior.
+- Run `linear_get_runtime_diagnostics` for a live snapshot of request totals, failure counters, recent sanitized failure context, and active stream session count.
+- Inspect stderr telemetry records to correlate a tool name, transport, duration, outcome, retryability, and upstream request ID without exposing raw headers or request bodies.
 - If `linear_search_issues` fails with an `IssueFilter.search` GraphQL error, the client is still connected to a stale build or package that predates the raw search fix. Rebuild or reinstall the package, restart the MCP server, and re-check `linear_get_capabilities`.
 - If startup logs say `Auth: no LINEAR_API_KEY or LINEAR_ACCESS_TOKEN detected`, the package installed correctly and you only need to finish auth setup.
 - If a remote client hangs on `/sse`, switch it to the configured streamable HTTP endpoint such as `/mcp`, or run the server in stdio mode for local clients.
+- If a request reaches its time budget, the returned failure identifies the timed-out operation and keeps the retryable timeout classification (`TIMEOUT` / HTTP 408) in the structured GraphQL error payload.
+- Safe read operations may retry within the bounded request policy before failing. Non-idempotent writes do not auto-retry, so rerun those manually only after confirming the upstream state.
 - Before publishing, run `npm run verify:release` to rebuild, validate the built tool catalog, and smoke-test a fresh package install.
 
 ## Comment tools

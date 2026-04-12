@@ -1,25 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { LinearClient } from '@linear/sdk';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import {
+  DEFAULT_OAUTH_REQUEST_TIMEOUT_MS,
+  executeWithRequestPolicy,
+} from './core/request-policy.js';
 import { LinearGraphQLClient } from './graphql/client.js';
-
-/**
- * Solution Attempts:
- * 
- * 1. OAuth Flow with Browser (Initial Attempt)
- * - Used browser redirect and local server for OAuth flow
- * - Issues: Browser extensions interfering, CORS issues
- * - Status: Failed - Browser extensions and CORS blocking requests
- * 
- * 2. Personal Access Token (Current Attempt)
- * - Using API Key for initial integration tests
- * - Simpler approach without browser interaction
- * - Status: Working - Successfully authenticates and makes API calls
- * 
- * 3. Direct OAuth Token Exchange (Current Attempt)
- * - Using form-urlencoded content type as required by Linear
- * - Status: In Progress - Testing token exchange
- */
 
 export interface OAuthConfig {
   type: 'oauth';
@@ -41,6 +27,10 @@ export interface TokenData {
   expiresAt: number;
 }
 
+export interface LinearAuthOptions {
+  oauthRequestTimeoutMs?: number;
+}
+
 export class LinearAuth {
   private static readonly OAUTH_AUTH_URL = 'https://linear.app/oauth';
   private static readonly OAUTH_TOKEN_URL = 'https://api.linear.app';
@@ -52,7 +42,7 @@ export class LinearAuth {
   private pendingOAuthState?: string;
   private refreshPromise?: Promise<void>;
 
-  constructor() {}
+  constructor(private readonly options: LinearAuthOptions = {}) {}
 
   public getAuthorizationUrl(): string {
     const config = this.getOAuthConfig();
@@ -198,7 +188,7 @@ export class LinearAuth {
   }
 
   public createScopedCopy(): LinearAuth {
-    const copy = new LinearAuth();
+    const copy = new LinearAuth(this.options);
 
     if (!this.config) {
       return copy;
@@ -288,34 +278,43 @@ export class LinearAuth {
     refresh_token?: string;
     expires_in: number;
   }> {
-    const response = await fetch(`${LinearAuth.OAUTH_TOKEN_URL}/oauth/token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/json'
+    return executeWithRequestPolicy(
+      context,
+      async ({ signal }) => {
+        const response = await fetch(`${LinearAuth.OAUTH_TOKEN_URL}/oauth/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json'
+          },
+          body: params.toString(),
+          signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`${context} failed: ${response.statusText}. Response: ${errorText}`);
+        }
+
+        const data = await response.json() as Partial<{
+          access_token: string;
+          refresh_token: string;
+          expires_in: number;
+        }>;
+
+        if (!data.access_token || typeof data.expires_in !== 'number') {
+          throw new Error(`${context} returned an incomplete token response`);
+        }
+
+        return {
+          access_token: data.access_token,
+          refresh_token: data.refresh_token,
+          expires_in: data.expires_in,
+        };
       },
-      body: params.toString()
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`${context} failed: ${response.statusText}. Response: ${errorText}`);
-    }
-
-    const data = await response.json() as Partial<{
-      access_token: string;
-      refresh_token: string;
-      expires_in: number;
-    }>;
-
-    if (!data.access_token || typeof data.expires_in !== 'number') {
-      throw new Error(`${context} returned an incomplete token response`);
-    }
-
-    return {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      expires_in: data.expires_in,
-    };
+      {
+        timeoutMs: this.options.oauthRequestTimeoutMs ?? DEFAULT_OAUTH_REQUEST_TIMEOUT_MS,
+      }
+    );
   }
 }

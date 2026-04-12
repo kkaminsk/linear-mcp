@@ -206,6 +206,25 @@ describe('LinearAuth', () => {
       );
     });
 
+    it('should surface timeout-driven token exchange failures', async () => {
+      const timeoutAuth = new LinearAuth({ oauthRequestTimeoutMs: 1 });
+      timeoutAuth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+
+      mockFetch.mockImplementation(() => new Promise<Response>(() => undefined));
+
+      timeoutAuth.getAuthorizationUrl();
+      const state = timeoutAuth.getPendingOAuthState();
+
+      await expect(timeoutAuth.handleCallback('valid-code', state!)).rejects.toThrow(
+        'OAuth token exchange failed: OAuth token exchange timed out after 1ms'
+      );
+    });
+
     it('should require a fresh state after a successful callback', async () => {
       auth.initialize({
         type: 'oauth',
@@ -334,6 +353,27 @@ describe('LinearAuth', () => {
       ));
 
       await expect(auth.refreshAPIKey()).rejects.toThrow();
+    });
+
+    it('should throw timeout-driven errors when token refresh hangs', async () => {
+      const timeoutAuth = new LinearAuth({ oauthRequestTimeoutMs: 1 });
+      timeoutAuth.initialize({
+        type: 'oauth',
+        clientId: 'test-client-id',
+        clientSecret: 'test-client-secret',
+        redirectUri: 'http://localhost:3000/callback'
+      });
+      timeoutAuth.setTokenData({
+        apiKey: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Date.now() - 1000
+      });
+
+      mockFetch.mockImplementation(() => new Promise<Response>(() => undefined));
+
+      await expect(timeoutAuth.refreshAPIKey()).rejects.toThrow(
+        'Token refresh failed: OAuth token refresh timed out after 1ms'
+      );
     });
 
     it('should throw error when called with API Key config', async () => {

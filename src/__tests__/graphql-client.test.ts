@@ -1,5 +1,5 @@
 import { jest, describe, it, expect, beforeEach } from '@jest/globals';
-import { LinearGraphQLClient } from '../graphql/client';
+import { LinearGraphQLClient, LinearGraphQLRequestError } from '../graphql/client';
 import { LinearClient } from '@linear/sdk';
 import { 
   CreateIssueInput, 
@@ -44,6 +44,23 @@ jest.mock('@linear/sdk');
 type GraphQLResponse<T> = {
   data: T;
 };
+
+const createRetryableRawFailure = (message: string = 'Temporary outage') => ({
+  data: undefined,
+  errors: [
+    {
+      message,
+      extensions: {
+        code: 'SERVICE_UNAVAILABLE'
+      }
+    }
+  ],
+  status: 503
+});
+
+const createRetryableSdkFailure = (message?: string) => ({
+  response: createRetryableRawFailure(message)
+});
 
 describe('LinearGraphQLClient', () => {
   let graphqlClient: LinearGraphQLClient;
@@ -415,6 +432,148 @@ describe('LinearGraphQLClient', () => {
         },
         first: 1,
       });
+    });
+  });
+
+  describe('request resilience', () => {
+    it('retries approved raw GraphQL reads before succeeding', async () => {
+      graphqlClient = new LinearGraphQLClient(linearClient, {
+        safeReadRetryDelayMs: 0
+      });
+
+      const successResponse = {
+        data: {
+          teams: {
+            nodes: [
+              {
+                id: 'team-1',
+                name: 'Platform'
+              }
+            ]
+          }
+        }
+      };
+
+      mockRawRequest
+        .mockResolvedValueOnce(createRetryableRawFailure() as unknown as GraphQLResponse<unknown>)
+        .mockResolvedValueOnce(createRetryableRawFailure() as unknown as GraphQLResponse<unknown>)
+        .mockResolvedValueOnce(successResponse as GraphQLResponse<unknown>);
+
+      await expect(graphqlClient.getTeams()).resolves.toEqual(successResponse.data);
+      expect(mockRawRequest).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries approved SDK reads before succeeding', async () => {
+      graphqlClient = new LinearGraphQLClient(linearClient, {
+        safeReadRetryDelayMs: 0
+      });
+
+      mockIssues
+        .mockRejectedValueOnce(createRetryableSdkFailure())
+        .mockResolvedValueOnce({
+          nodes: [
+            {
+              id: 'issue-431',
+              identifier: 'POL-431'
+            }
+          ]
+        });
+
+      await expect(graphqlClient.findIssueByIdentifier('POL-431')).resolves.toMatchObject({
+        id: 'issue-431',
+        identifier: 'POL-431'
+      });
+      expect(mockIssues).toHaveBeenCalledTimes(2);
+    });
+
+    it('surfaces retry exhaustion after bounded safe-read retries', async () => {
+      graphqlClient = new LinearGraphQLClient(linearClient, {
+        safeReadMaxAttempts: 2,
+        safeReadRetryDelayMs: 0
+      });
+
+      mockRawRequest.mockResolvedValue(
+        createRetryableRawFailure() as unknown as GraphQLResponse<unknown>
+      );
+
+      let caughtError: unknown;
+      try {
+        await graphqlClient.getTeams();
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(LinearGraphQLRequestError);
+      expect(caughtError).toMatchObject({
+        message: 'GraphQL operation GetTeams failed: Temporary outage',
+        result: {
+          meta: {
+            status: 503,
+            retryable: true,
+          },
+        },
+      });
+      expect(mockRawRequest).toHaveBeenCalledTimes(2);
+    });
+
+    it('classifies timed out requests as structured timeout failures', async () => {
+      graphqlClient = new LinearGraphQLClient(linearClient, {
+        requestTimeoutMs: 1,
+        safeReadMaxAttempts: 1,
+        safeReadRetryDelayMs: 0
+      });
+
+      mockRawRequest.mockImplementation(
+        () => new Promise<GraphQLResponse<unknown>>(() => undefined)
+      );
+
+      let caughtError: unknown;
+      try {
+        await graphqlClient.getTeams();
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(LinearGraphQLRequestError);
+      expect(caughtError).toMatchObject({
+        message: 'GraphQL operation GetTeams failed: GetTeams timed out after 1ms',
+        result: {
+          errors: [
+            {
+              message: 'GetTeams timed out after 1ms',
+              extensions: {
+                code: 'TIMEOUT'
+              }
+            }
+          ],
+          meta: {
+            status: 408,
+            retryable: true,
+          },
+        },
+      });
+      expect(mockRawRequest).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not auto-retry non-idempotent writes', async () => {
+      graphqlClient = new LinearGraphQLClient(linearClient, {
+        safeReadRetryDelayMs: 0
+      });
+
+      mockRawRequest.mockResolvedValueOnce(
+        createRetryableRawFailure() as unknown as GraphQLResponse<unknown>
+      );
+
+      const input: CreateIssueInput = {
+        title: 'New Issue',
+        description: 'Description',
+        teamId: 'team-1'
+      };
+
+      await expect(graphqlClient.createIssue(input)).rejects.toThrow(
+        'GraphQL operation CreateIssue failed: Temporary outage'
+      );
+      expect(mockRawRequest).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -12,6 +12,24 @@ import {
   TestLinearAuth,
 } from './helpers/runtime-smoke.js';
 
+function getTelemetryEntries(
+  consoleErrorSpy: ReturnType<typeof jest.spyOn>
+): Array<Record<string, unknown>> {
+  return consoleErrorSpy.mock.calls.flatMap((call: unknown[]) => {
+    const entry = call[0];
+    if (typeof entry !== 'string') {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(entry) as Record<string, unknown>;
+      return parsed.event === 'mcp_tool_request' ? [parsed] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 describe('runtime transport server', () => {
   const runtimeEnv = captureRuntimeEnv();
   let consoleErrorSpy: ReturnType<typeof jest.spyOn>;
@@ -158,6 +176,32 @@ describe('runtime transport server', () => {
     }
   });
 
+  it('emits structured telemetry for successful tool requests', async () => {
+    const harness = await createRuntimeSmokeHarness({
+      clientName: 'runtime-telemetry-success-test',
+    });
+
+    try {
+      await harness.client.callTool({
+        name: 'linear_get_capabilities',
+        arguments: {},
+      });
+
+      const telemetry = getTelemetryEntries(consoleErrorSpy).at(-1);
+      expect(telemetry).toMatchObject({
+        event: 'mcp_tool_request',
+        tool: 'linear_get_capabilities',
+        transport: 'stream',
+        authScope: 'session',
+        outcome: 'success',
+      });
+      expect(telemetry?.durationMs).toEqual(expect.any(Number));
+      expect(telemetry).not.toHaveProperty('upstreamRequestId');
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('sanitizes structured GraphQL errors at the MCP boundary', async () => {
     const graphQLClient = {
       sdk: {
@@ -231,6 +275,142 @@ describe('runtime transport server', () => {
       expect(result.structuredContent?.error.graphql).not.toHaveProperty('headers');
       expect(result.structuredContent?.error.graphql).not.toHaveProperty('extensions');
       expect(result.structuredContent?.error.graphql.errors[0].extensions).not.toHaveProperty('secret');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('emits sanitized telemetry for failed tool requests', async () => {
+    const graphQLClient = {
+      sdk: {
+        issue: jest.fn(),
+      },
+      executeSdk: jest.fn(async () => {
+        throw new LinearGraphQLRequestError(
+          'issue',
+          {
+            errors: [
+              {
+                message: 'Rate limited',
+                extensions: {
+                  code: 'RATE_LIMITED',
+                  secret: 'hidden',
+                },
+              },
+            ],
+            meta: {
+              status: 429,
+              retryable: true,
+              headers: {
+                authorization: 'Bearer secret',
+                'x-request-id': 'req-123',
+              },
+            },
+            extensions: {
+              requestId: 'req-999',
+              traceId: 'hidden',
+            },
+          },
+          'GraphQL operation issue failed: Rate limited'
+        );
+      }),
+    } as unknown as LinearGraphQLClient;
+
+    const harness = await createRuntimeSmokeHarness({
+      clientName: 'runtime-telemetry-failure-test',
+      serverOptions: {
+        auth: new TestLinearAuth(graphQLClient),
+      },
+    });
+
+    try {
+      await harness.client.callTool({
+        name: 'linear_get_issue',
+        arguments: {
+          id: 'ISS-1',
+        },
+      });
+
+      const telemetry = getTelemetryEntries(consoleErrorSpy).at(-1);
+      expect(telemetry).toMatchObject({
+        event: 'mcp_tool_request',
+        tool: 'linear_get_issue',
+        transport: 'stream',
+        authScope: 'session',
+        outcome: 'error',
+        errorType: 'graphql',
+        retryable: true,
+        upstreamRequestId: 'req-123',
+        upstreamStatus: 429,
+      });
+
+      const serializedTelemetry = JSON.stringify(telemetry);
+      expect(serializedTelemetry).not.toContain('authorization');
+      expect(serializedTelemetry).not.toContain('Bearer secret');
+      expect(serializedTelemetry).not.toContain('hidden');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('reports transport-aware runtime diagnostics without secrets', async () => {
+    const harness = await createRuntimeSmokeHarness({
+      clientName: 'runtime-diagnostics-test',
+    });
+
+    try {
+      const tools = await harness.client.listTools();
+      expect(tools.tools.some(tool => tool.name === 'linear_get_runtime_diagnostics')).toBe(true);
+
+      await harness.client.callTool({
+        name: 'linear_get_capabilities',
+        arguments: {},
+      });
+
+      const validationResult = await harness.client.callTool({
+        name: 'linear_create_issue',
+        arguments: {
+          teamId: 'team-1',
+        },
+      }) as { isError?: boolean };
+      expect(validationResult.isError).toBe(true);
+
+      const diagnosticsResult = await harness.client.callTool({
+        name: 'linear_get_runtime_diagnostics',
+        arguments: {},
+      }) as { structuredContent?: Record<string, any> };
+
+      expect(diagnosticsResult.structuredContent).toMatchObject({
+        transport: 'stream',
+        authScope: 'session',
+        sessions: {
+          activeStreamSessions: 1,
+        },
+        requests: {
+          total: 2,
+          successful: 1,
+          failed: 1,
+        },
+        failures: {
+          validation: 1,
+          retryable: 0,
+        },
+        auth: {
+          startupMode: 'tool-driven',
+          startupSource: null,
+        },
+        lastFailure: {
+          tool: 'linear_create_issue',
+          type: 'validation',
+          retryable: false,
+        },
+      });
+
+      const serializedDiagnostics = JSON.stringify(diagnosticsResult.structuredContent);
+      expect(serializedDiagnostics).not.toContain('LINEAR_API_KEY');
+      expect(serializedDiagnostics).not.toContain('LINEAR_ACCESS_TOKEN');
+      expect(serializedDiagnostics).not.toContain('authorization');
+      expect(serializedDiagnostics).not.toContain('Bearer');
     } finally {
       await harness.close();
     }

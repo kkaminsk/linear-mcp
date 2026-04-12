@@ -1,5 +1,5 @@
 {
-  "name": "linear-mcp",
+  "name": "@kkaminsk/linear-mcp",
   "version": "1.0.0",
   "description": "Model Context Protocol server for Linear",
   "main": "./build/index.js",

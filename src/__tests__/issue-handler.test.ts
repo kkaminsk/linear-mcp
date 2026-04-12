@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { LinearAuth } from '../auth.js';
-import { IssueHandler } from '../features/issues/handlers/issue.handler.js';
+import {
+  IssueHandler,
+  ISSUE_BULK_CONCURRENCY_LIMIT,
+} from '../features/issues/handlers/issue.handler.js';
 import {
   CreateIssueInput,
   CreateIssuesInput,
@@ -471,6 +474,83 @@ describe('IssueHandler', () => {
       error: {
         type: 'partial',
       },
+    });
+  });
+
+  it('bounds concurrent issue updates while preserving result order for larger batches', async () => {
+    const issueIds = Array.from(
+      { length: ISSUE_BULK_CONCURRENCY_LIMIT + 3 },
+      (_, index) => `issue-${index + 1}`
+    );
+    let activeUpdates = 0;
+    let maxActiveUpdates = 0;
+
+    mockClient.sdk.updateIssue.mockImplementation(async (issueId) => {
+      activeUpdates += 1;
+      maxActiveUpdates = Math.max(maxActiveUpdates, activeUpdates);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      activeUpdates -= 1;
+
+      return {
+        success: true,
+        issue: {
+          id: issueId,
+          identifier: issueId.toUpperCase(),
+          title: `Updated ${issueId}`,
+          url: `https://linear.app/test/issue/${issueId}`,
+        },
+      };
+    });
+
+    const result = await handler.handleBulkUpdateIssues({
+      issueIds,
+      update: {
+        priority: 2,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(maxActiveUpdates).toBe(ISSUE_BULK_CONCURRENCY_LIMIT);
+    expect(result.structuredContent).toMatchObject({
+      success: true,
+      issues: issueIds.map(id => ({
+        id,
+      })),
+    });
+    expect(
+      (result.structuredContent?.issues as Array<Record<string, unknown>>).map(issue => issue.id)
+    ).toEqual(issueIds);
+  });
+
+  it('bounds concurrent issue deletions while preserving deletedIds order for larger batches', async () => {
+    const issueIds = Array.from(
+      { length: ISSUE_BULK_CONCURRENCY_LIMIT + 4 },
+      (_, index) => `issue-${index + 1}`
+    );
+    let activeDeletes = 0;
+    let maxActiveDeletes = 0;
+
+    mockClient.sdk.deleteIssue.mockImplementation(async () => {
+      activeDeletes += 1;
+      maxActiveDeletes = Math.max(maxActiveDeletes, activeDeletes);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      activeDeletes -= 1;
+
+      return {
+        success: true,
+      };
+    });
+
+    const result = await handler.handleDeleteIssues({
+      ids: issueIds,
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(maxActiveDeletes).toBe(ISSUE_BULK_CONCURRENCY_LIMIT);
+    expect(result.structuredContent).toMatchObject({
+      success: true,
+      ids: issueIds,
+      deletedIds: issueIds,
     });
   });
 });

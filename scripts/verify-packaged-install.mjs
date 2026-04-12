@@ -78,7 +78,7 @@ try {
 
   assert(
     packagedSearchClient.includes('term: query')
-      && packagedSearchClient.includes('this.executeData(SEARCH_ISSUES_QUERY, variables)'),
+      && packagedSearchClient.includes('this.executeData(SEARCH_ISSUES_QUERY, variables'),
     'Fresh package install must ship the raw issue-search helper that sends the free-text term separately from IssueFilter variables.'
   );
   assert(

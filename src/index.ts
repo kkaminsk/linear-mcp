@@ -16,6 +16,7 @@ import {
   getRuntimeCapabilities,
   getStreamTransportConfig,
 } from './core/capabilities.js';
+import { RuntimeObservability } from './core/runtime-observability.js';
 import { formatServerBuildInfo, getServerBuildInfo } from './core/server-build.js';
 import { HandlerFactory } from './core/handlers/handler.factory.js';
 import { BaseToolResponse, ToolHandlerMethod } from './core/interfaces/tool-handler.interface.js';
@@ -97,6 +98,7 @@ export class LinearServer {
   private capabilities: RuntimeCapabilities;
   private readonly buildInfo = getServerBuildInfo();
   private readonly startupApiKeySelection: StartupApiKeySelection;
+  private readonly observability: RuntimeObservability;
   private httpServer?: HttpServer;
   private readonly shutdownHandler = (): void => {
     void this.close().finally(() => process.exit(0));
@@ -118,6 +120,10 @@ export class LinearServer {
     this.stdioAuth = this.authTemplate.createScopedCopy();
     this.handlerFactory = new HandlerFactory(this.capabilities);
     this.toolValidators = new ToolValidatorRegistry(this.capabilities);
+    this.observability = new RuntimeObservability(
+      this.capabilities,
+      () => this.streamSessions.size
+    );
     this.server = this.createProtocolServer(this.stdioAuth);
     process.once('SIGINT', this.shutdownHandler);
   }
@@ -140,6 +146,10 @@ export class LinearServer {
     }));
 
     server.setRequestHandler(CallToolRequestSchema, async (request): Promise<BaseToolResponse> => {
+      const startedAt = Date.now();
+      let telemetryResponse: BaseToolResponse | undefined;
+      let telemetryError: unknown;
+
       try {
         if (!this.toolValidators.hasTool(request.params.name)) {
           throw new McpError(
@@ -154,7 +164,13 @@ export class LinearServer {
         );
 
         if (!validation.valid) {
-          return this.createValidationErrorResponse(request.params.name, validation);
+          telemetryResponse = this.createValidationErrorResponse(request.params.name, validation);
+          return telemetryResponse;
+        }
+
+        if (request.params.name === 'linear_get_runtime_diagnostics') {
+          telemetryResponse = this.createRuntimeDiagnosticsResponse();
+          return telemetryResponse;
         }
 
         const { handler, method } = this.handlerFactory.getHandlerForTool(request.params.name, auth);
@@ -164,20 +180,24 @@ export class LinearServer {
           throw new Error(`Handler method not found: ${method}`);
         }
 
-        return await toolMethod.call(
+        telemetryResponse = await toolMethod.call(
           handler,
           validation.data
         );
+        return telemetryResponse;
       } catch (error) {
+        telemetryError = error;
+
         if (error instanceof McpError && error.code === ErrorCode.MethodNotFound) {
-          throw new McpError(
+          telemetryError = new McpError(
             ErrorCode.MethodNotFound,
             `Unknown tool: ${request.params.name}`
           );
+          throw telemetryError;
         }
 
         if (error instanceof McpError) {
-          return this.createRuntimeErrorResponse(
+          telemetryResponse = this.createRuntimeErrorResponse(
             request.params.name,
             'mcp',
             error.message,
@@ -185,14 +205,23 @@ export class LinearServer {
               code: error.code,
             }
           );
+          return telemetryResponse;
         }
 
         const message = error instanceof Error ? error.message : 'Unknown error';
-        return this.createRuntimeErrorResponse(
+        telemetryResponse = this.createRuntimeErrorResponse(
           request.params.name,
           'internal',
           message
         );
+        return telemetryResponse;
+      } finally {
+        const durationMs = Math.max(Date.now() - startedAt, 0);
+        if (telemetryResponse) {
+          this.observability.recordResponse(request.params.name, telemetryResponse, durationMs);
+        } else if (telemetryError) {
+          this.observability.recordError(request.params.name, telemetryError, durationMs);
+        }
       }
     });
 
@@ -323,6 +352,23 @@ export class LinearServer {
         },
       },
       isError: true,
+    };
+  }
+
+  private createRuntimeDiagnosticsResponse(): BaseToolResponse {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: 'Reported live runtime diagnostics',
+        },
+      ],
+      structuredContent: this.observability.createDiagnosticsSnapshot({
+        startupSource: this.startupApiKeySelection.source,
+        hasPrimaryEnv: this.startupApiKeySelection.hasPrimary,
+        hasAliasEnv: this.startupApiKeySelection.hasAlias,
+        stdioAuthenticated: this.stdioAuth.isAuthenticated(),
+      }),
     };
   }
 

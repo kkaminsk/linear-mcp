@@ -1,6 +1,7 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { BaseHandler } from '../../../core/handlers/base.handler.js';
 import { BaseToolResponse } from '../../../core/interfaces/tool-handler.interface.js';
+import { mapWithConcurrencyLimit } from '../../../core/concurrency.js';
 import { LinearAuth } from '../../../auth.js';
 import {
   asRecord,
@@ -27,6 +28,8 @@ import {
   ListIssuesInput,
   SearchIssuesInput,
 } from '../types/issue.types.js';
+
+export const ISSUE_BULK_CONCURRENCY_LIMIT = 5;
 
 export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
   constructor(auth: LinearAuth) {
@@ -121,8 +124,10 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
         throw new Error('issueIds must be a non-empty array');
       }
 
-      const results = await Promise.all(
-        args.issueIds.map(async (issueId) => {
+      const results = await mapWithConcurrencyLimit(
+        args.issueIds,
+        ISSUE_BULK_CONCURRENCY_LIMIT,
+        async issueId => {
           const payload = await client.executeSdk(
             'updateIssue',
             () => client.sdk.updateIssue(issueId, args.update)
@@ -132,7 +137,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
             success: getBoolean(payload, 'success') ?? true,
             issue: await this.mapIssueSummary(issue),
           };
-        })
+        }
       );
 
       const allSuccess = results.every(r => r.success);
@@ -244,8 +249,10 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
         throw new Error('ids must be a non-empty array');
       }
 
-      const results = await Promise.all(
-        args.ids.map(async id => {
+      const results = await mapWithConcurrencyLimit(
+        args.ids,
+        ISSUE_BULK_CONCURRENCY_LIMIT,
+        async id => {
           try {
             const payload = await client.executeSdk('deleteIssue', () => client.sdk.deleteIssue(id));
 
@@ -268,7 +275,7 @@ export class IssueHandler extends BaseHandler implements IssueHandlerMethods {
               message: this.getDeleteFailureMessage(error),
             };
           }
-        })
+        }
       );
 
       const deletedIds = results.filter(result => result.success).map(result => result.id);
