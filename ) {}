@@ -1,0 +1,47 @@
+
+**Test Helper Complexity**
+`src/__tests__/helpers/runtime-smoke.ts` creates sophisticated mock environments. The `TestLinearAuth` class extends `LinearAuth` and overrides methods, which creates tight coupling to the implementation. Consider using interface-based mocking or dependency injection instead of class inheritance for tests.
+
+## Reliability Analysis
+
+### Strengths
+
+**Request Policy Resilience**
+The `executeWithRequestPolicy` function implements a robust retry mechanism with:
+- Exponential backoff calculation (`retryDelayMs * attempt`)
+- Attempt context passing for cancellation signals
+- Proper cleanup of AbortController listeners
+- Last error preservation for final throw
+
+**GraphQL Error Normalization**
+`src/graphql/client.ts` provides sophisticated error handling:
+- `normalizeErrors` converts unknown error shapes into structured `GraphQLErrorDetail` objects
+- `isRetryable` checks both HTTP status codes and GraphQL error codes
+- `createErrorResult` ensures consistent error shapes even for unexpected exceptions
+
+**Compensation Transactions**
+The `createProjectWithIssues` method implements saga pattern compensation:
+- If issue creation fails after project creation, it attempts to delete the orphaned project
+- Returns detailed failure context including `compensationAttempted` and `compensationSucceeded` flags
+- Preserves partial results (`project`, `issues`) for debugging
+
+**Safe SDK Operations**
+The `SAFE_SDK_READ_OPERATIONS` Set in `src/graphql/client.ts` explicitly whitelists operations that can be safely retried, preventing dangerous retries of mutations that may have already partially executed server-side.
+
+### Areas for Improvement
+
+**AbortController Listener Cleanup**
+In `executeWithTimeout`, the abort listener is added with `{ once: true }`, but if the promise resolves before abort, the listener is removed via `controller.signal.removeEventListener`. However, if `execute` throws synchronously (before the Promise microtask), the `onAbort` listener might not be cleaned up immediately. Consider using `AbortSignal.any` (Node 20+) or ensuring cleanup in a `finally` block.
+
+**Race Condition in Telemetry**
+`RuntimeObservability` maintains counters (`totalRequests`, `successfulRequests`, etc.) as private instance variables. If multiple async operations complete simultaneously, these increments could race. While JavaScript is single-threaded, the async boundary between await points could theoretically allow interleaving. Consider using atomic operations or ensuring these updates happen synchronously.
+
+**GraphQL Client State Management**
+The `LinearGraphQLClient` maintains a reference to `LinearClient` which may hold HTTP connection pools. If `LinearAuth` creates new `LinearClient` instances on token refresh (implied by `createScopedCopy`), old clients might not have their connections cleaned up. Ensure `LinearClient` instances are properly disposed or reused.
+
+**Test Port Reliability**
+`getAvailablePort` in `src/__tests__/helpers/runtime-smoke.ts` binds to port 0 to find an available port, then closes the server. This creates a race condition where another process could bind to that port between `getAvailablePort` returning and the actual test server starting. Consider using port 0 binding directly on the test server with retry logic.
+
+**Error Message Construction**
+The `buildErrorMessage` method in `src/graphql/client.ts` concatenates strings that could potentially be very large (GraphQL error messages). If error messages contain massive query dumps, this could cause memory pressure. Consider truncating error messages:
+

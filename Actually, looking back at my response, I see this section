@@ -1,0 +1,10 @@
+// Instead of
+return typeof value === 'object' && value !== null && !Array.isArray(value)
+  ? value as Record<string, unknown>
+  : undefined;
+
+// Use
+return typeof value === 'object' && value !== null && !Array.isArray(value)
+  ? (value as Record<string, unknown>)
+  : undefined;
+// But preferably validate keys/structure

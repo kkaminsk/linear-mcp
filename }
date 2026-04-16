@@ -1,0 +1,50 @@
+In a long-running process, these repeated imports may cause module cache lookups and minor GC pressure. Consider caching these imports at the module level or implementing an import-once pattern.
+
+**GraphQL Query Construction**
+The `searchIssues` method constructs filter objects through `buildIssueIdentifierFilter` which uses `compactObject` and `asRecord` utilities. This object manipulation on every search call adds overhead. Consider memoizing identifier parsing for repeated searches.
+
+**JSON Serialization in Telemetry**
+The `recordTelemetry` method uses `JSON.stringify(this.compactRecord(record))` on every request. For high-throughput scenarios, consider:
+- Using a structured logger that accepts objects directly
+- Implementing sampling for high-frequency operations
+- Batching telemetry records before output
+
+**Array Pre-allocation**
+In `mapWithConcurrencyLimit`, the results array is pre-allocated with `new Array<TResult>(items.length)`. While this is memory-efficient, consider whether sparse arrays (when concurrency < items.length during execution) cause deoptimization in V8.
+
+## Best Practices Analysis
+
+### Strengths
+
+**Strict Type Safety in Concurrency**
+The `mapWithConcurrencyLimit` function properly constrains generic types `TItem` and `TResult`, ensuring type safety across the concurrent mapping operation. The `readonly TItem[]` parameter declaration prevents accidental mutation of input arrays.
+
+**Exhaustive Error Handling**
+`src/core/request-policy.ts` implements comprehensive error propagation:
+- Distinguishes between timeout errors (`RequestTimeoutError`) and execution failures
+- Preserves error stack traces through the Promise chain
+- Implements exponential backoff with `retryDelayMs * attempt`
+
+**Defensive Programming**
+The codebase demonstrates excellent defensive patterns:
+- `Number.isInteger(concurrency) || concurrency < 1` validation prevents invalid concurrency configurations
+- `Math.max(options.timeoutMs, 1)` ensures minimum viable timeout values
+- `WeakMap` usage in handler caching (from summaries) prevents memory leaks
+
+**Structured Telemetry**
+`RuntimeObservability` implements a well-structured telemetry system with:
+- Discriminated unions for success/error outcomes
+- Private type guards (`asRecord`, `readBoolean`, `readNumber`, `readString`)
+- Immutable snapshot creation for diagnostics
+
+### Areas for Improvement
+
+**Type Assertion Usage**
+Several locations use `as` type assertions that could fail silently:
+- `src/core/concurrency.ts`: `items[currentIndex] as TItem` is unnecessary since `items` is already `readonly TItem[]`
+- `src/core/runtime-observability.ts`: Multiple `as Record<string, unknown>` casts bypass type safety
+
+Replace with runtime validation where possible, or remove unnecessary assertions.
+
+**Magic Numbers**
+`src/core/request-policy.ts` contains hardcoded status codes:

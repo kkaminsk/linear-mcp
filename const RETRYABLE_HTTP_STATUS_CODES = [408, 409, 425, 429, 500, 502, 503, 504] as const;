@@ -1,0 +1,4 @@
+
+**Console Usage in Production**
+`src/core/runtime-observability.ts` uses `console.error(JSON.stringify(...))` for telemetry. In production environments, this bypasses structured logging pipelines and may interleave with other console output. Consider injecting a logger interface:
+
